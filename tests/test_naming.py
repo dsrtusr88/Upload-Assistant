@@ -20,6 +20,17 @@ class ApplyPreferredSceneNameTest(unittest.TestCase):
 
         self.assertEqual(meta["name"], "Scene.Name.Test")
 
+    def test_preserves_original_extension(self):
+        meta = {
+            "name": "Original.Release.Name.mkv",
+            "radarr": {"movieFile": {"sceneName": "Scene Name"}},
+        }
+        config = {"NAMING": {"prefer_radarr_scene_name": True}}
+
+        apply_preferred_scene_name(meta, config)
+
+        self.assertEqual(meta["name"], "Scene.Name.mkv")
+
     def test_applies_normalization_when_enabled(self):
         meta = {"name": "Original", "radarr": {"movieFile": {"sceneName": "Release DD+ HDR."}}}
         config = {
@@ -82,6 +93,16 @@ class PreferRadarrSceneNameTest(unittest.TestCase):
         prefer_radarr_scene_name(meta)
 
         self.assertEqual(meta["name"], "Scene Name Test")
+
+    def test_preserves_extension_when_preferred(self):
+        meta = {
+            "name": "Original.Name.mkv",
+            "radarr": {"movieFile": {"sceneName": "Scene Name"}},
+        }
+
+        prefer_radarr_scene_name(meta)
+
+        self.assertEqual(meta["name"], "Scene Name.mkv")
 
     def test_leaves_name_when_missing_scene(self):
         meta = {"name": "Original", "radarr": {"movieFile": {}}}
