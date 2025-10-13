@@ -94,6 +94,30 @@ def apply_preferred_scene_name(meta: dict[str, Any], config: dict[str, Any]) -> 
         pass
 
 
+def prefer_radarr_scene_name(meta: dict[str, Any]) -> None:
+    """Unconditionally prefer Radarr's ``sceneName`` for ``meta['name']`` when present."""
+
+    try:
+        radarr_data = meta.get("radarr") or {}
+        movie_file = radarr_data.get("movieFile") or {}
+        scene_name = (movie_file.get("sceneName") or "").strip()
+        if not scene_name:
+            return
+
+        scene_name = scene_name.replace("DD+", "DDP")
+        scene_name = scene_name.replace("HDR.", "HDR10.")
+
+        for char in ("{", "}", "[", "]", "(", ")"):
+            scene_name = scene_name.replace(char, "")
+
+        if scene_name:
+            meta["name"] = scene_name
+    except Exception:
+        # Naming issues should never interrupt the main workflow
+        pass
+
+
 __all__ = [
     "apply_preferred_scene_name",
+    "prefer_radarr_scene_name",
 ]

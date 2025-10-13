@@ -1,6 +1,6 @@
 import unittest
 
-from src.naming import apply_preferred_scene_name
+from src.naming import apply_preferred_scene_name, prefer_radarr_scene_name
 
 
 class ApplyPreferredSceneNameTest(unittest.TestCase):
@@ -59,6 +59,36 @@ class ApplyPreferredSceneNameTest(unittest.TestCase):
         apply_preferred_scene_name(meta, config)
 
         self.assertEqual(meta["name"], "Scene.Name.Test")
+
+
+class PreferRadarrSceneNameTest(unittest.TestCase):
+    def test_sets_scene_name_when_available(self):
+        meta = {"name": "Original", "radarr": {"movieFile": {"sceneName": "Scene Name"}}}
+
+        prefer_radarr_scene_name(meta)
+
+        self.assertEqual(meta["name"], "Scene Name")
+
+    def test_applies_minimal_normalization(self):
+        meta = {"name": "Original", "radarr": {"movieFile": {"sceneName": "Release DD+ HDR."}}}
+
+        prefer_radarr_scene_name(meta)
+
+        self.assertEqual(meta["name"], "Release DDP HDR10.")
+
+    def test_strips_limited_characters(self):
+        meta = {"name": "Original", "radarr": {"movieFile": {"sceneName": "Scene Name {Test}"}}}
+
+        prefer_radarr_scene_name(meta)
+
+        self.assertEqual(meta["name"], "Scene Name Test")
+
+    def test_leaves_name_when_missing_scene(self):
+        meta = {"name": "Original", "radarr": {"movieFile": {}}}
+
+        prefer_radarr_scene_name(meta)
+
+        self.assertEqual(meta["name"], "Original")
 
 
 if __name__ == "__main__":
