@@ -36,8 +36,10 @@ jobs:
 
       - name: Get lowercase repo name
         run: |
-          REPO_NAME=${{ env.IMAGE_NAME }} 
-          echo "LOWER_CASE_REPO_NAME=${REPO_NAME,,}" >> $GITHUB_ENV
+          REPO_NAME=${{ env.IMAGE_NAME }}
+          LOWER_NAME=${REPO_NAME,,}
+          echo "LOWER_CASE_REPO_NAME=${LOWER_NAME}" >> $GITHUB_ENV
+          echo "LOWER_CASE_IMAGE_NAME=${LOWER_NAME}" >> $GITHUB_ENV
 
       - name: Get version for tagging
         run: |
@@ -53,7 +55,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.REGISTRY }}/${{ env.LOWER_CASE_IMAGE_NAME }}
           tags: |
             type=ref,event=branch
             type=ref,event=tag
@@ -74,8 +76,8 @@ jobs:
         run: |
           echo "✅ Docker images built and pushed successfully!"
           echo "🐋 Images:"
-          echo "  - ${{ env.REGISTRY }}/${{ env.LOWER_CASE_REPO_NAME }}:${{ env.VERSION }}"
-          echo "  - ${{ env.REGISTRY }}/${{ env.LOWER_CASE_REPO_NAME }}:latest"
+          echo "  - ${{ env.REGISTRY }}/${{ env.LOWER_CASE_IMAGE_NAME }}:${{ env.VERSION }}"
+          echo "  - ${{ env.REGISTRY }}/${{ env.LOWER_CASE_IMAGE_NAME }}:latest"
           if [ "${{ github.event_name }}" == "release" ]; then
             echo "📝 Triggered by release: ${{ github.event.release.tag_name }}"
           else
