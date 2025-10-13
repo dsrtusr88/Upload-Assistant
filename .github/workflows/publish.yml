@@ -2,7 +2,7 @@ name: Build & Publish Docker (GHCR)
 
 on:
   push:
-    branches: [ main ]        # change to [ master ] if repo uses master
+    branches: [ master ]      # fork uses master
     tags: ['v*', 'release-*']
   workflow_dispatch:
 
