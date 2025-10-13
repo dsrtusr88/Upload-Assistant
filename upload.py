@@ -237,6 +237,25 @@ async def process_meta(meta, base_dir, bot=None):
 
     editargs_tracking = ()
     previous_trackers = meta.get('trackers', [])
+
+    # Prefer Radarr sceneName for final release name (movies), if available.
+    # This ensures the linked filename and torrent name use scene-style naming when Radarr provides it.
+    try:
+        r = meta.get("radarr") or {}
+        mf = (r.get("movieFile") or {})
+        scene = (mf.get("sceneName") or "").strip()
+        if scene:
+            # Minimal, conservative normalizations (optional; safe to keep)
+            scene = scene.replace("DD+", "DDP")
+            scene = scene.replace("HDR.", "HDR10.")
+            # Keep filename safety similar to existing behavior (do not over-sanitize)
+            for ch in ("{", "}", "[", "]", "(", ")"):
+                scene = scene.replace(ch, "")
+            meta["name"] = scene
+    except Exception:
+        # Never block the pipeline on naming issues
+        pass
+
     try:
         confirm = await helper.get_confirmation(meta)
     except EOFError:
