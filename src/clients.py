@@ -1011,6 +1011,7 @@ class Clients():
             raise ValueError(error_msg)
 
         # Create tracker-specific directory inside linked folder
+        rename_target = None
         if use_symlink or use_hardlink:
             # allow overridden folder name with link_dir_name config var
             tracker_cfg = self.config["TRACKERS"].get(tracker.upper(), {})
@@ -1018,12 +1019,31 @@ class Clients():
             tracker_dir = os.path.join(link_target, link_dir_name or tracker)
             await asyncio.to_thread(os.makedirs, tracker_dir, exist_ok=True)
 
-            src_name = os.path.basename(src.rstrip(os.sep))
-            dst = os.path.join(tracker_dir, src_name)
+            src_basename = os.path.basename(src.rstrip(os.sep))
+            src_is_file = os.path.isfile(src)
+            src_root, src_ext = os.path.splitext(src_basename)
+
+            release = (meta.get("name") or meta.get("release_name") or (src_root if src_is_file else src_basename)).strip()
+
+            # Conservative safety: strip a few bracket chars; keep dots
+            for ch in ("{", "}", "[", "]", "(", ")"):
+                release = release.replace(ch, "")
+
+            if not release:
+                release = src_root if src_is_file else src_basename
+
+            if src_is_file:
+                dest_filename = f"{release}{src_ext}"
+                dest_path = os.path.join(tracker_dir, dest_filename)
+                rename_candidate = dest_filename
+            else:
+                dest_dirname = release or src_basename
+                dest_path = os.path.join(tracker_dir, dest_dirname)
+                rename_candidate = dest_dirname
 
             linking_success = await async_link_directory(
                 src=src,
-                dst=dst,
+                dst=dest_path,
                 use_hardlink=use_hardlink,
                 debug=meta.get('debug', False)
             )
@@ -1033,6 +1053,10 @@ class Clients():
                 # Reset linking settings for fallback
                 use_hardlink = False
                 use_symlink = False
+            elif linking_success:
+                torrent_name = getattr(torrent, "name", None)
+                if rename_candidate and rename_candidate != torrent_name:
+                    rename_target = rename_candidate
 
         proxy_url = client.get('qui_proxy_url')
         qbt_client = None
@@ -1131,6 +1155,8 @@ class Clients():
                 data.add_field('contentLayout', content_layout)
                 if qbt_category:
                     data.add_field('category', qbt_category)
+                if rename_target:
+                    data.add_field('rename', rename_target)
                 data.add_field('torrents', torrent.dump(), filename='torrent.torrent', content_type='application/x-bittorrent')
 
                 async with qbt_session.post(f"{qbt_proxy_url}/api/v2/torrents/add",
@@ -1139,14 +1165,20 @@ class Clients():
                         console.print(f"[bold red]Failed to add torrent via proxy: {response.status}")
                         return
             else:
+                add_kwargs = dict(
+                    torrent_files=torrent.dump(),
+                    save_path=save_path,
+                    use_auto_torrent_management=auto_management,
+                    is_skip_checking=True,
+                    content_layout=content_layout,
+                )
+                if qbt_category:
+                    add_kwargs["category"] = qbt_category
+                if rename_target:
+                    add_kwargs["rename"] = rename_target
+
                 await self.retry_qbt_operation(
-                    lambda: asyncio.to_thread(qbt_client.torrents_add,
-                                              torrent_files=torrent.dump(),
-                                              save_path=save_path,
-                                              use_auto_torrent_management=auto_management,
-                                              is_skip_checking=True,
-                                              content_layout=content_layout,
-                                              category=qbt_category),
+                    lambda: asyncio.to_thread(qbt_client.torrents_add, **add_kwargs),
                     "Add torrent to qBittorrent",
                     initial_timeout=14.0
                 )
