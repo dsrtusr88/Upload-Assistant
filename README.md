@@ -110,6 +110,26 @@ Better just to be on this fork and bug me about my bugs, rather than bugging som
   Args are OPTIONAL and ALWAYS follow path, for a list of acceptable args, pass `--help`.
   Path works best in quotes.
 
+### Naming configuration
+
+Upload Assistant now supports an opt-in naming block in `data/config.py` for users who prefer Radarr's scene naming when linking files and generating torrents:
+
+```python
+"NAMING": {
+    "prefer_radarr_scene_name": False,
+    "normalize_scene_tokens": False,
+    "sanitize_filenames": True,
+    "space_replacement": ".",
+    "strip_chars": ["{", "}", "[", "]", "(", ")"],
+}
+```
+
+* `prefer_radarr_scene_name`: When set to `True`, UA will use `movieFile.sceneName` from Radarr (if present) for the linked filename and torrent name.
+* `normalize_scene_tokens`: Optional replacements for common scene tokens (e.g. `DD+` → `DDP`, `HDR.` → `HDR10.`).
+* `sanitize_filenames`: Controls lightweight cleanup before linking. You can adjust `space_replacement` and `strip_chars` to fit tracker rules.
+
+If Radarr does not supply a scene name or the toggle remains `False`, UA keeps the existing naming behavior.
+
 ## **Docker Usage:**
   Visit our wonderful [docker usage wiki page](https://github.com/Audionut/Upload-Assistant/wiki/Docker)
 
