@@ -275,6 +275,19 @@ config = {
 
     },
 
+    "NAMING": {
+        # Opt-in preference for Radarr-provided scene names.
+        "prefer_radarr_scene_name": False,
+
+        # Replace common scene tokens (e.g. DD+ -> DDP, HDR. -> HDR10.) when enabled.
+        "normalize_scene_tokens": False,
+
+        # Sanitize scene names before using them for linked files and torrents.
+        "sanitize_filenames": True,
+        "space_replacement": ".",
+        "strip_chars": ["{", "}", "[", "]", "(", ")"],
+    },
+
     # these are used for DB links on AR
     "IMAGES": {
         "imdb_75": 'https://i.imgur.com/Mux5ObG.png',
