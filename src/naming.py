@@ -1,6 +1,8 @@
 """Helpers for Upload Assistant naming logic."""
 from __future__ import annotations
 
+import os
+
 from typing import Any, Iterable
 
 DEFAULT_STRIP_CHARS: tuple[str, ...] = ("{", "}", "[", "]", "(", ")")
@@ -32,6 +34,19 @@ def _sanitize_scene_name(
     if replacement is not None:
         scene_name = scene_name.replace(" ", replacement)
     return scene_name
+
+
+def _append_original_extension(original_name: Any, new_name: str) -> str:
+    """Append the original file extension to ``new_name`` when appropriate."""
+
+    if not isinstance(original_name, str):
+        return new_name
+
+    _, ext = os.path.splitext(original_name.strip())
+    if ext and not new_name.lower().endswith(ext.lower()):
+        return f"{new_name}{ext}"
+
+    return new_name
 
 
 def apply_preferred_scene_name(meta: dict[str, Any], config: dict[str, Any]) -> None:
@@ -88,7 +103,7 @@ def apply_preferred_scene_name(meta: dict[str, Any], config: dict[str, Any]) -> 
             )
 
         if scene_name:
-            meta["name"] = scene_name
+            meta["name"] = _append_original_extension(meta.get("name"), scene_name)
     except Exception:
         # Never break the upload flow due to naming issues
         pass
@@ -111,7 +126,7 @@ def prefer_radarr_scene_name(meta: dict[str, Any]) -> None:
             scene_name = scene_name.replace(char, "")
 
         if scene_name:
-            meta["name"] = scene_name
+            meta["name"] = _append_original_extension(meta.get("name"), scene_name)
     except Exception:
         # Naming issues should never interrupt the main workflow
         pass
