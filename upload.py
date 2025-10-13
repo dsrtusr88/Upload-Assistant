@@ -29,7 +29,7 @@ from src.get_desc import gen_desc
 from src.get_tracker_data import get_tracker_data
 from src.languages import process_desc_language
 from src.nfo_link import nfo_link
-from src.naming import apply_preferred_scene_name
+from src.naming import apply_preferred_scene_name, prefer_radarr_scene_name
 from src.queuemanage import handle_queue
 from src.takescreens import disc_screenshots, dvd_screenshots, screenshots
 from src.torrentcreate import create_torrent, create_random_torrents, create_base_from_existing_torrent
@@ -211,6 +211,7 @@ async def process_meta(meta, base_dir, bot=None):
 
         meta['name_notag'], meta['name'], meta['clean_name'], meta['potential_missing'] = await get_name(meta)
         apply_preferred_scene_name(meta, config)
+        prefer_radarr_scene_name(meta)
 
         if meta['debug']:
             console.print(f"Trackers list before editing: {meta['trackers']}")
@@ -238,23 +239,7 @@ async def process_meta(meta, base_dir, bot=None):
     editargs_tracking = ()
     previous_trackers = meta.get('trackers', [])
 
-    # Prefer Radarr sceneName for final release name (movies), if available.
-    # This ensures the linked filename and torrent name use scene-style naming when Radarr provides it.
-    try:
-        r = meta.get("radarr") or {}
-        mf = (r.get("movieFile") or {})
-        scene = (mf.get("sceneName") or "").strip()
-        if scene:
-            # Minimal, conservative normalizations (optional; safe to keep)
-            scene = scene.replace("DD+", "DDP")
-            scene = scene.replace("HDR.", "HDR10.")
-            # Keep filename safety similar to existing behavior (do not over-sanitize)
-            for ch in ("{", "}", "[", "]", "(", ")"):
-                scene = scene.replace(ch, "")
-            meta["name"] = scene
-    except Exception:
-        # Never block the pipeline on naming issues
-        pass
+    prefer_radarr_scene_name(meta)
 
     try:
         confirm = await helper.get_confirmation(meta)
@@ -304,6 +289,7 @@ async def process_meta(meta, base_dir, bot=None):
         meta = await prep.gather_prep(meta=meta, mode='cli')
         meta['name_notag'], meta['name'], meta['clean_name'], meta['potential_missing'] = await get_name(meta)
         apply_preferred_scene_name(meta, config)
+        prefer_radarr_scene_name(meta)
         try:
             confirm = await helper.get_confirmation(meta)
         except EOFError:
