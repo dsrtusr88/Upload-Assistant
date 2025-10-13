@@ -65,7 +65,19 @@ def apply_preferred_scene_name(meta: dict[str, Any], config: dict[str, Any]) -> 
                     char for char in strip_chars_config if isinstance(char, str) and char
                 )
             elif isinstance(strip_chars_config, str):
-                strip_chars = (strip_chars_config,)
+                stripped = strip_chars_config.strip()
+                if "," in stripped:
+                    # Allow comma-separated characters/strings (e.g. "{,}")
+                    parsed = [
+                        item.strip()
+                        for item in stripped.split(",")
+                        if item.strip()
+                    ]
+                else:
+                    # Fall back to treating each non-whitespace character individually
+                    parsed = [char for char in stripped if not char.isspace()]
+
+                strip_chars = tuple(parsed) if parsed else DEFAULT_STRIP_CHARS
             else:
                 strip_chars = DEFAULT_STRIP_CHARS
 
