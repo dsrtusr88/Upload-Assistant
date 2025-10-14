@@ -29,6 +29,7 @@ def _extract_radarr_scene_name(radarr_data: dict[str, Any] | None) -> str | None
 
     return None
 
+
 DEFAULT_STRIP_CHARS: tuple[str, ...] = ("{", "}", "[", "]", "(", ")")
 DEFAULT_SPACE_REPLACEMENT = "."
 
@@ -127,7 +128,6 @@ def apply_preferred_scene_name(meta: dict[str, Any], config: dict[str, Any]) -> 
     except Exception:
         # Never break the upload flow due to naming issues
         pass
-
 
 
 def prefer_radarr_scene_name(meta: dict[str, Any]) -> None:
