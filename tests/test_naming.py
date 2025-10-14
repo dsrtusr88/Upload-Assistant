@@ -85,14 +85,14 @@ class PreferRadarrSceneNameTest(unittest.TestCase):
 
         prefer_radarr_scene_name(meta)
 
-        self.assertEqual(meta["name"], "Release DDP HDR10.")
+        self.assertEqual(meta["name"], "Release DD+ HDR.")
 
     def test_strips_limited_characters(self):
         meta = {"name": "Original", "radarr": {"movieFile": {"sceneName": "Scene Name {Test}"}}}
 
         prefer_radarr_scene_name(meta)
 
-        self.assertEqual(meta["name"], "Scene Name Test")
+        self.assertEqual(meta["name"], "Scene Name {Test}")
 
     def test_preserves_extension_when_preferred(self):
         meta = {
@@ -110,6 +110,13 @@ class PreferRadarrSceneNameTest(unittest.TestCase):
         prefer_radarr_scene_name(meta)
 
         self.assertEqual(meta["name"], "Original")
+
+    def test_sets_torrent_override_when_scene_available(self):
+        meta = {"name": "Original.mkv", "radarr": {"movieFile": {"sceneName": "Scene.Name"}}}
+
+        prefer_radarr_scene_name(meta)
+
+        self.assertEqual(meta["torrent_name_override"], "Scene.Name.mkv")
 
 
 if __name__ == "__main__":
