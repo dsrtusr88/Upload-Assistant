@@ -181,7 +181,6 @@ def apply_preferred_scene_name(meta: dict[str, Any], config: dict[str, Any]) -> 
             )
 
         if scene_name:
-            meta["name"] = _append_original_extension(meta.get("name"), scene_name)
             _store_preferred_scene_name(meta, scene_name)
     except Exception:
         # Never break the upload flow due to naming issues
@@ -198,7 +197,6 @@ def prefer_radarr_scene_name(meta: dict[str, Any]) -> None:
             return
 
         if scene_name:
-            meta["name"] = _append_original_extension(meta.get("name"), scene_name)
             _store_preferred_scene_name(meta, scene_name)
     except Exception:
         # Naming issues should never interrupt the main workflow
