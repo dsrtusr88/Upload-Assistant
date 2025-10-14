@@ -1,4 +1,5 @@
 import httpx
+from pathlib import Path
 from typing import Any, Optional
 
 from data.config import config
@@ -85,6 +86,65 @@ async def get_radarr_data(tmdb_id=None, filename=None, debug=False):
     return None
 
 
+def _normalize_tokens(value: Optional[str]) -> set[str]:
+    """Return a set of comparable tokens for a filesystem path or name."""
+
+    if not isinstance(value, str):
+        return set()
+
+    stripped = value.strip()
+    if not stripped:
+        return set()
+
+    tokens = {stripped.lower()}
+
+    try:
+        path = Path(stripped)
+    except Exception:
+        return tokens
+
+    parts = {path.name.lower()}
+    if path.stem:
+        parts.add(path.stem.lower())
+
+    # Include parent directory names for folder comparisons (e.g. Radarr's
+    # ``folder`` vs UA's ``uuid``).
+    if path.parent != path:
+        parts.add(path.parent.name.lower())
+
+    tokens.update(part for part in parts if part)
+    return tokens
+
+
+def _match_movie_from_filename(radarr_data, filename: Optional[str]):
+    if not filename:
+        return None
+
+    target_tokens = _normalize_tokens(filename)
+    if not target_tokens:
+        return None
+
+    for item in radarr_data:
+        movie_file = item.get("movieFile") or {}
+        candidate_values = [
+            movie_file.get("originalFilePath"),
+            movie_file.get("path"),
+            movie_file.get("relativePath"),
+            item.get("path"),
+            item.get("folder"),
+            item.get("folderName"),
+        ]
+
+        candidate_tokens = set()
+        for value in candidate_values:
+            candidate_tokens.update(_normalize_tokens(value))
+
+        if target_tokens & candidate_tokens:
+            return item
+
+    return None
+
+
 async def extract_movie_data(radarr_data, filename=None):
     if not radarr_data or not isinstance(radarr_data, list) or len(radarr_data) == 0:
         return {
@@ -96,15 +156,7 @@ async def extract_movie_data(radarr_data, filename=None):
             "movie": None,
         }
 
-    if filename:
-        for item in radarr_data:
-            if item.get("movieFile") and item["movieFile"].get("originalFilePath") == filename:
-                movie = item
-                break
-        else:
-            return None
-    else:
-        movie = radarr_data[0]
+    movie = _match_movie_from_filename(radarr_data, filename) or radarr_data[0]
 
     release_group = None
     if movie.get("movieFile") and movie["movieFile"].get("releaseGroup"):
