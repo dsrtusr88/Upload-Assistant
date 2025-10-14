@@ -13,6 +13,7 @@ import sys
 import platform
 import glob
 from typing import Optional
+
 from src.console import console
 
 
@@ -176,7 +177,9 @@ def build_mkbrr_exclude_string(root_folder, filelist):
 
 def create_torrent(meta, path, output_filename, tracker_url=None):
     filelist = meta.get('torrent_filelist', meta['filelist'])
-    if meta['isdir']:
+    path = os.fspath(path)
+
+    if os.path.isdir(path):
         if meta['keep_folder']:
             cli_ui.info('--keep-folder was specified. Using complete folder for torrent creation.')
             if not meta.get('tv_pack', False):
