@@ -259,7 +259,12 @@ class DescriptionBuilder:
             except Exception:
                 pass
 
-        video_file = meta['filelist'][0]
+        file_candidates = meta.get('torrent_filelist') or meta.get('filelist') or []
+
+        if not file_candidates:
+            return ''
+
+        video_file = file_candidates[0]
         mi_template = os.path.join(meta['base_dir'], 'data', 'templates', 'MEDIAINFO.txt')
         mi_file_path = os.path.join(cache_file_dir, 'MEDIAINFO_CLEANPATH.txt')
 
