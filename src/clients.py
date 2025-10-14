@@ -892,7 +892,6 @@ class Clients():
             linking_info = meta.setdefault('linking_info', {})
             linking_info['mediainfo_path'] = linked_video
 
-
     def rtorrent(self, path, torrent_path, torrent, meta, local_path, remote_path, client, tracker):
         # Get the appropriate source path (same as in qbittorrent method)
         if len(meta.get('filelist', [])) == 1 and os.path.isfile(meta['filelist'][0]) and not meta.get('keep_folder'):
