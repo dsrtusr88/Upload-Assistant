@@ -75,6 +75,7 @@ def _is_managed_path(path: os.PathLike[str] | str) -> bool:
                 return True
     return False
 
+
 try:  # ``aiofiles`` is optional at runtime.
     import aiofiles  # type: ignore
 
@@ -353,4 +354,3 @@ def patch_file_permissions() -> None:
     _patch_aiofiles()
 
     _PATCHED = True
-

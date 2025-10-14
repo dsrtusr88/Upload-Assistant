@@ -9,4 +9,3 @@ from .file_permissions import patch_file_permissions
 patch_file_permissions()
 
 __all__ = ["patch_file_permissions"]
-
