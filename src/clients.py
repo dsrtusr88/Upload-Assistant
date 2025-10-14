@@ -82,6 +82,102 @@ class Clients():
             shutil.copy(torrent_path, client['watch_folder'])
         return
 
+    async def prepare_linked_source(self, meta):
+        """Create a linked copy of the payload before torrent creation.
+
+        This ensures that the torrent is generated against the linked
+        release name/path rather than the original source file.
+        """
+        linking_info = meta.get('linking_info', {})
+        if linking_info.get('prepared'):
+            return
+
+        if meta.get('client', None) is None:
+            default_torrent_client = self.config['DEFAULT']['default_torrent_client']
+        else:
+            default_torrent_client = meta['client']
+
+        if meta.get('client', None) == 'none' or default_torrent_client == 'none':
+            meta['linking_info'] = {'prepared': True, 'success': False}
+            return
+
+        client_cfg = self.config['TORRENT_CLIENTS'].get(default_torrent_client)
+        if not client_cfg:
+            meta['linking_info'] = {'prepared': True, 'success': False}
+            return
+
+        linking_method = str(client_cfg.get('linking', '') or '').lower()
+        if linking_method not in ('symlink', 'hardlink'):
+            meta['linking_info'] = {'prepared': True, 'success': False}
+            return
+
+        src = self._determine_source_path(meta)
+        if not src:
+            meta['linking_info'] = {'prepared': True, 'success': False}
+            return
+
+        linked_folder = client_cfg.get('linked_folder', [])
+        if not isinstance(linked_folder, list):
+            linked_folder = [linked_folder] if linked_folder else []
+
+        if not linked_folder:
+            meta['linking_info'] = {'prepared': True, 'success': False}
+            return
+
+        use_symlink = linking_method == 'symlink'
+        use_hardlink = linking_method == 'hardlink'
+
+        link_target = self._select_link_target(src, linked_folder, use_symlink, meta)
+        if not link_target:
+            meta['linking_info'] = {'prepared': True, 'success': False}
+            return
+
+        base_dir_name = str(client_cfg.get('base_link_dir_name', 'BASE')).strip() or 'BASE'
+        tracker_dir = os.path.join(link_target, base_dir_name)
+        await asyncio.to_thread(os.makedirs, tracker_dir, exist_ok=True)
+
+        dest_path, rename_target = self._build_dest_path(src, tracker_dir, meta)
+
+        allow_fallback = client_cfg.get('allow_fallback', True)
+
+        linking_success = await async_link_directory(
+            src=src,
+            dst=dest_path,
+            use_hardlink=use_hardlink,
+            debug=meta.get('debug', False)
+        )
+
+        if not linking_success:
+            if not allow_fallback:
+                console.print(f"[bold red]Failed to link {src} to {dest_path}")
+            meta['linking_info'] = {
+                'prepared': True,
+                'success': False,
+                'method': linking_method,
+                'link_target': link_target,
+                'tracker_dir': tracker_dir,
+                'dest_path': dest_path,
+                'rename_target': rename_target,
+            }
+            return
+
+        torrent_filelist = self._build_linked_filelist(meta, src, dest_path)
+
+        meta['linking_info'] = {
+            'prepared': True,
+            'success': True,
+            'method': linking_method,
+            'link_target': link_target,
+            'tracker_dir': tracker_dir,
+            'dest_path': dest_path,
+            'rename_target': rename_target,
+            'filelist': torrent_filelist,
+            'base_dir_name': base_dir_name,
+        }
+
+        meta['torrent_data_path'] = dest_path
+        meta['torrent_filelist'] = torrent_filelist
+
     async def find_existing_torrent(self, meta):
         if meta.get('client', None) is None:
             default_torrent_client = self.config['DEFAULT']['default_torrent_client']
@@ -605,6 +701,123 @@ class Clients():
 
         return result
 
+    def _determine_source_path(self, meta):
+        if len(meta.get('filelist', [])) == 1 and os.path.isfile(meta['filelist'][0]) and not meta.get('keep_folder'):
+            return meta['filelist'][0]
+        return meta.get('path')
+
+    def _select_link_target(self, src, linked_folder, use_symlink, meta):
+        if platform.system() == "Windows":
+            src_drive = os.path.splitdrive(src)[0]
+        else:
+            src_drive = "/"
+            mounted_volumes = []
+            try:
+                if os.path.exists('/proc/mounts'):
+                    with open('/proc/mounts', 'r') as f:
+                        for line in f:
+                            parts = line.split()
+                            if len(parts) >= 2:
+                                mounted_volumes.append(parts[1])
+                else:
+                    output = subprocess.check_output(['mount'], text=True)
+                    for line in output.splitlines():
+                        parts = line.split()
+                        if len(parts) >= 3:
+                            mounted_volumes.append(parts[2])
+            except Exception as e:
+                if meta.get('debug', False):
+                    console.print(f"[yellow]Error getting mount points: {str(e)}")
+
+            mounted_volumes.sort(key=len, reverse=True)
+
+            for mount_point in mounted_volumes:
+                if src.startswith(mount_point):
+                    src_drive = mount_point
+                    break
+
+            if src_drive == "/":
+                src_parts = src.strip('/').split('/')
+                if src_parts:
+                    src_root_dir = '/' + src_parts[0]
+                    for folder in linked_folder:
+                        if src_root_dir in folder or folder in src_root_dir:
+                            src_drive = src_root_dir
+                            break
+
+        if platform.system() == "Windows":
+            for folder in linked_folder:
+                folder_drive = os.path.splitdrive(folder)[0]
+                if folder_drive == src_drive:
+                    return folder
+        else:
+            for folder in linked_folder:
+                if folder.startswith(src_drive) or src.startswith(folder):
+                    return folder
+
+            if use_symlink and linked_folder:
+                return linked_folder[0]
+
+        return None
+
+    def _build_dest_path(self, src, tracker_dir, meta):
+        src_basename = os.path.basename(src.rstrip(os.sep))
+        src_is_file = os.path.isfile(src)
+        src_root, src_ext = os.path.splitext(src_basename)
+
+        resolved_release = meta.get("single_file_release_name")
+        if isinstance(resolved_release, str) and resolved_release.strip():
+            release = resolved_release.strip()
+        else:
+            preferred_release = (
+                meta.get("preferred_scene_name")
+                or meta.get("torrent_name_override")
+                or meta.get("scene_name")
+            )
+
+            if isinstance(preferred_release, str) and preferred_release.strip():
+                release = preferred_release.strip()
+            else:
+                release = (
+                    meta.get("name")
+                    or meta.get("release_name")
+                    or (src_root if src_is_file else src_basename)
+                ).strip()
+
+                for ch in ("{", "}", "[", "]", "(", ")"):
+                    release = release.replace(ch, "")
+
+        if not release:
+            release = src_root if src_is_file else src_basename
+
+        if src_is_file:
+            if release.lower().endswith(src_ext.lower()):
+                dest_filename = release
+            else:
+                dest_filename = f"{release}{src_ext}"
+            dest_path = os.path.join(tracker_dir, dest_filename)
+            rename_target = dest_filename
+        else:
+            dest_dirname = release or src_basename
+            dest_path = os.path.join(tracker_dir, dest_dirname)
+            rename_target = dest_dirname
+
+        return dest_path, rename_target
+
+    def _build_linked_filelist(self, meta, src, dest_path):
+        filelist = meta.get('filelist', [])
+        if os.path.isfile(src):
+            return [dest_path]
+
+        new_filelist = []
+        for original in filelist:
+            try:
+                rel_path = os.path.relpath(original, src)
+            except ValueError:
+                rel_path = os.path.basename(original)
+            new_filelist.append(os.path.join(dest_path, rel_path))
+        return new_filelist
+
     def rtorrent(self, path, torrent_path, torrent, meta, local_path, remote_path, client, tracker):
         # Get the appropriate source path (same as in qbittorrent method)
         if len(meta.get('filelist', [])) == 1 and os.path.isfile(meta['filelist'][0]) and not meta.get('keep_folder'):
@@ -619,166 +832,182 @@ class Clients():
             console.print(f"[bold red]{error_msg}")
             raise ValueError(error_msg)
 
-        # Determine linking method
-        linking_method = client.get('linking', None)  # "symlink", "hardlink", or None
-        if meta.get('debug', False):
-            console.print("Linking method:", linking_method)
-        use_symlink = linking_method == "symlink"
-        use_hardlink = linking_method == "hardlink"
+        linking_info = meta.get('linking_info', {})
+        prelinked_dest = linking_info.get('dest_path')
+        prelinked_success = bool(linking_info.get('success')) and prelinked_dest and os.path.exists(prelinked_dest)
 
-        if use_symlink and use_hardlink:
-            error_msg = "Cannot use both hard links and symlinks simultaneously"
-            console.print(f"[bold red]{error_msg}")
-            raise ValueError(error_msg)
-
-        # Process linking if enabled
-        if use_symlink or use_hardlink:
-            # Get linked folder for this drive
-            linked_folder = client.get('linked_folder', [])
+        if prelinked_success:
+            linking_method = linking_info.get('method')
+            use_symlink = linking_method == "symlink"
+            use_hardlink = linking_method == "hardlink"
+            tracker_dir = linking_info.get('tracker_dir') or (
+                os.path.dirname(prelinked_dest)
+                if os.path.isfile(prelinked_dest)
+                else prelinked_dest
+            )
+            dst = prelinked_dest
+            path = prelinked_dest if os.path.isdir(prelinked_dest) else os.path.dirname(prelinked_dest)
+        else:
+            # Determine linking method
+            linking_method = client.get('linking', None)  # "symlink", "hardlink", or None
             if meta.get('debug', False):
-                console.print(f"Linked folders: {linked_folder}")
-            if not isinstance(linked_folder, list):
-                linked_folder = [linked_folder]  # Convert to list if single value
+                console.print("Linking method:", linking_method)
+            use_symlink = linking_method == "symlink"
+            use_hardlink = linking_method == "hardlink"
 
-            # Determine drive letter (Windows) or root (Linux)
-            if platform.system() == "Windows":
-                src_drive = os.path.splitdrive(src)[0]
-            else:
-                # On Unix/Linux, use the root directory or first directory component
-                src_drive = "/"
-                # Extract the first directory component for more specific matching
-                src_parts = src.strip('/').split('/')
-                if src_parts:
-                    src_root_dir = '/' + src_parts[0]
-                    # Check if any linked folder contains this root
-                    for folder in linked_folder:
-                        if src_root_dir in folder or folder in src_root_dir:
-                            src_drive = src_root_dir
-                            break
-
-            # Find a linked folder that matches the drive
-            link_target = None
-            if platform.system() == "Windows":
-                # Windows matching based on drive letters
-                for folder in linked_folder:
-                    folder_drive = os.path.splitdrive(folder)[0]
-                    if folder_drive == src_drive:
-                        link_target = folder
-                        break
-            else:
-                # Unix/Linux matching based on path containment
-                for folder in linked_folder:
-                    # Check if source path is in the linked folder or vice versa
-                    if src.startswith(folder) or folder.startswith(src) or folder.startswith(src_drive):
-                        link_target = folder
-                        break
-
-            if meta.get('debug', False):
-                console.print(f"Source drive: {src_drive}")
-                console.print(f"Link target: {link_target}")
-
-            # If using symlinks and no matching drive folder, allow any available one
-            if use_symlink and not link_target and linked_folder:
-                link_target = linked_folder[0]
-
-            if (use_symlink or use_hardlink) and not link_target:
-                error_msg = f"No suitable linked folder found for drive {src_drive}"
+            if use_symlink and use_hardlink:
+                error_msg = "Cannot use both hard links and symlinks simultaneously"
                 console.print(f"[bold red]{error_msg}")
                 raise ValueError(error_msg)
 
-            # Create tracker-specific directory inside linked folder
+            # Process linking if enabled
             if use_symlink or use_hardlink:
-                # allow overridden folder name with link_dir_name config var
-                tracker_cfg = self.config["TRACKERS"].get(tracker.upper(), {})
-                link_dir_name = str(tracker_cfg.get("link_dir_name", "")).strip()
-                tracker_dir = os.path.join(link_target, link_dir_name or tracker)
-                os.makedirs(tracker_dir, exist_ok=True)
+                # Get linked folder for this drive
+                linked_folder = client.get('linked_folder', [])
+                if meta.get('debug', False):
+                    console.print(f"Linked folders: {linked_folder}")
+                if not isinstance(linked_folder, list):
+                    linked_folder = [linked_folder]  # Convert to list if single value
+
+                # Determine drive letter (Windows) or root (Linux)
+                if platform.system() == "Windows":
+                    src_drive = os.path.splitdrive(src)[0]
+                else:
+                    # On Unix/Linux, use the root directory or first directory component
+                    src_drive = "/"
+                    # Extract the first directory component for more specific matching
+                    src_parts = src.strip('/').split('/')
+                    if src_parts:
+                        src_root_dir = '/' + src_parts[0]
+                        # Check if any linked folder contains this root
+                        for folder in linked_folder:
+                            if src_root_dir in folder or folder in src_root_dir:
+                                src_drive = src_root_dir
+                                break
+
+                # Find a linked folder that matches the drive
+                link_target = None
+                if platform.system() == "Windows":
+                    # Windows matching based on drive letters
+                    for folder in linked_folder:
+                        folder_drive = os.path.splitdrive(folder)[0]
+                        if folder_drive == src_drive:
+                            link_target = folder
+                            break
+                else:
+                    # Unix/Linux matching based on path containment
+                    for folder in linked_folder:
+                        # Check if source path is in the linked folder or vice versa
+                        if src.startswith(folder) or folder.startswith(src) or folder.startswith(src_drive):
+                            link_target = folder
+                            break
 
                 if meta.get('debug', False):
-                    console.print(f"[bold yellow]Linking to tracker directory: {tracker_dir}")
-                    console.print(f"[cyan]Source path: {src}")
+                    console.print(f"Source drive: {src_drive}")
+                    console.print(f"Link target: {link_target}")
 
-                # Extract only the folder or file name from `src`
-                src_name = os.path.basename(src.rstrip(os.sep))  # Ensure we get just the name
-                dst = os.path.join(tracker_dir, src_name)  # Destination inside linked folder
+                # If using symlinks and no matching drive folder, allow any available one
+                if use_symlink and not link_target and linked_folder:
+                    link_target = linked_folder[0]
 
-                # path magic
-                if os.path.exists(dst) or os.path.islink(dst):
+                if (use_symlink or use_hardlink) and not link_target:
+                    error_msg = f"No suitable linked folder found for drive {src_drive}"
+                    console.print(f"[bold red]{error_msg}")
+                    raise ValueError(error_msg)
+
+                # Create tracker-specific directory inside linked folder
+                if use_symlink or use_hardlink:
+                    # allow overridden folder name with link_dir_name config var
+                    tracker_cfg = self.config["TRACKERS"].get(tracker.upper(), {})
+                    link_dir_name = str(tracker_cfg.get("link_dir_name", "")).strip()
+                    tracker_dir = os.path.join(link_target, link_dir_name or tracker)
+                    os.makedirs(tracker_dir, exist_ok=True)
+
                     if meta.get('debug', False):
-                        console.print(f"[yellow]Skipping linking, path already exists: {dst}")
-                else:
-                    if use_hardlink:
-                        try:
-                            # Check if we're linking a file or directory
-                            if os.path.isfile(src):
-                                # For a single file, create a hardlink directly
-                                try:
-                                    os.link(src, dst)
+                        console.print(f"[bold yellow]Linking to tracker directory: {tracker_dir}")
+                        console.print(f"[cyan]Source path: {src}")
+
+                    # Extract only the folder or file name from `src`
+                    src_name = os.path.basename(src.rstrip(os.sep))  # Ensure we get just the name
+                    dst = os.path.join(tracker_dir, src_name)  # Destination inside linked folder
+
+                    # path magic
+                    if os.path.exists(dst) or os.path.islink(dst):
+                        if meta.get('debug', False):
+                            console.print(f"[yellow]Skipping linking, path already exists: {dst}")
+                    else:
+                        if use_hardlink:
+                            try:
+                                # Check if we're linking a file or directory
+                                if os.path.isfile(src):
+                                    # For a single file, create a hardlink directly
+                                    try:
+                                        os.link(src, dst)
+                                        if meta.get('debug', False):
+                                            console.print(f"[green]Hard link created: {dst} -> {src}")
+                                    except OSError as e:
+                                        # If hardlink fails, try to copy the file instead
+                                        console.print(f"[yellow]Hard link failed: {e}")
+                                        console.print(f"[yellow]Falling back to file copy for: {src}")
+                                        shutil.copy2(src, dst)  # copy2 preserves metadata
+                                        console.print(f"[green]File copied instead: {dst}")
+                                else:
+                                    # For directories, we need to link each file inside
+                                    os.makedirs(dst, exist_ok=True)
+
+                                    for root, _, files in os.walk(src):
+                                        # Get the relative path from source
+                                        rel_path = os.path.relpath(root, src)
+
+                                        # Create corresponding directory in destination
+                                        if rel_path != '.':
+                                            dst_dir = os.path.join(dst, rel_path)
+                                            os.makedirs(dst_dir, exist_ok=True)
+
+                                        # Create hardlinks for each file
+                                        for file in files:
+                                            src_file = os.path.join(root, file)
+                                            dst_file = os.path.join(dst if rel_path == '.' else dst_dir, file)
+                                            try:
+                                                os.link(src_file, dst_file)
+                                                if meta.get('debug', False) and files.index(file) == 0:
+                                                    console.print(f"[green]Hard link created for file: {dst_file} -> {src_file}")
+                                            except OSError as e:
+                                                # If hardlink fails, copy file instead
+                                                console.print(f"[yellow]Hard link failed for file {file}: {e}")
+                                                shutil.copy2(src_file, dst_file)  # copy2 preserves metadata
+                                                console.print(f"[yellow]File copied instead: {dst_file}")
+
                                     if meta.get('debug', False):
-                                        console.print(f"[green]Hard link created: {dst} -> {src}")
-                                except OSError as e:
-                                    # If hardlink fails, try to copy the file instead
-                                    console.print(f"[yellow]Hard link failed: {e}")
-                                    console.print(f"[yellow]Falling back to file copy for: {src}")
-                                    shutil.copy2(src, dst)  # copy2 preserves metadata
-                                    console.print(f"[green]File copied instead: {dst}")
-                            else:
-                                # For directories, we need to link each file inside
-                                os.makedirs(dst, exist_ok=True)
+                                        console.print(f"[green]Directory structure and files processed: {dst}")
+                            except OSError as e:
+                                error_msg = f"Failed to create link: {e}"
+                                console.print(f"[bold red]{error_msg}")
+                                if meta.get('debug', False):
+                                    console.print(f"[yellow]Source: {src} (exists: {os.path.exists(src)})")
+                                    console.print(f"[yellow]Destination: {dst}")
+                                # Don't raise exception - just warn and continue
+                                console.print("[yellow]Continuing with rTorrent addition despite linking failure")
 
-                                for root, _, files in os.walk(src):
-                                    # Get the relative path from source
-                                    rel_path = os.path.relpath(root, src)
-
-                                    # Create corresponding directory in destination
-                                    if rel_path != '.':
-                                        dst_dir = os.path.join(dst, rel_path)
-                                        os.makedirs(dst_dir, exist_ok=True)
-
-                                    # Create hardlinks for each file
-                                    for file in files:
-                                        src_file = os.path.join(root, file)
-                                        dst_file = os.path.join(dst if rel_path == '.' else dst_dir, file)
-                                        try:
-                                            os.link(src_file, dst_file)
-                                            if meta.get('debug', False) and files.index(file) == 0:
-                                                console.print(f"[green]Hard link created for file: {dst_file} -> {src_file}")
-                                        except OSError as e:
-                                            # If hardlink fails, copy file instead
-                                            console.print(f"[yellow]Hard link failed for file {file}: {e}")
-                                            shutil.copy2(src_file, dst_file)  # copy2 preserves metadata
-                                            console.print(f"[yellow]File copied instead: {dst_file}")
+                        elif use_symlink:
+                            try:
+                                if platform.system() == "Windows":
+                                    os.symlink(src, dst, target_is_directory=os.path.isdir(src))
+                                else:
+                                    os.symlink(src, dst)
 
                                 if meta.get('debug', False):
-                                    console.print(f"[green]Directory structure and files processed: {dst}")
-                        except OSError as e:
-                            error_msg = f"Failed to create link: {e}"
-                            console.print(f"[bold red]{error_msg}")
-                            if meta.get('debug', False):
-                                console.print(f"[yellow]Source: {src} (exists: {os.path.exists(src)})")
-                                console.print(f"[yellow]Destination: {dst}")
-                            # Don't raise exception - just warn and continue
-                            console.print("[yellow]Continuing with rTorrent addition despite linking failure")
+                                    console.print(f"[green]Symbolic link created: {dst} -> {src}")
 
-                    elif use_symlink:
-                        try:
-                            if platform.system() == "Windows":
-                                os.symlink(src, dst, target_is_directory=os.path.isdir(src))
-                            else:
-                                os.symlink(src, dst)
+                            except OSError as e:
+                                error_msg = f"Failed to create symlink: {e}"
+                                console.print(f"[bold red]{error_msg}")
+                                # Don't raise exception - just warn and continue
+                                console.print("[yellow]Continuing with rTorrent addition despite linking failure")
 
-                            if meta.get('debug', False):
-                                console.print(f"[green]Symbolic link created: {dst} -> {src}")
-
-                        except OSError as e:
-                            error_msg = f"Failed to create symlink: {e}"
-                            console.print(f"[bold red]{error_msg}")
-                            # Don't raise exception - just warn and continue
-                            console.print("[yellow]Continuing with rTorrent addition despite linking failure")
-
-                # Use the linked path for rTorrent if linking was successful
-                if (use_symlink or use_hardlink) and os.path.exists(dst):
-                    path = dst
+                    # Use the linked path for rTorrent if linking was successful
+                    if (use_symlink or use_hardlink) and os.path.exists(dst):
+                        path = dst
 
         # Apply remote pathing to `tracker_dir` before assigning `save_path`
         if use_symlink or use_hardlink:
@@ -894,189 +1123,206 @@ class Clients():
             console.print(f"[bold red]{error_msg}")
             raise ValueError(error_msg)
 
-        # Determine linking method
-        linking_method = client.get('linking', None)  # "symlink", "hardlink", or None
-        if meta['debug']:
-            console.print("Linking method:", linking_method)
-        use_symlink = linking_method == "symlink"
-        use_hardlink = linking_method == "hardlink"
+        linking_info = meta.get('linking_info', {})
+        prelinked_dest = linking_info.get('dest_path')
+        prelinked_success = bool(linking_info.get('success')) and prelinked_dest and os.path.exists(prelinked_dest)
 
-        if use_symlink and use_hardlink:
-            error_msg = "Cannot use both hard links and symlinks simultaneously"
-            console.print(f"[bold red]{error_msg}")
-            raise ValueError(error_msg)
-
-        # Get linked folder for this drive
-        linked_folder = client.get('linked_folder', [])
-        if meta['debug']:
-            console.print(f"Linked folders: {linked_folder}")
-        if not isinstance(linked_folder, list):
-            linked_folder = [linked_folder]  # Convert to list if single value
-
-        # Determine drive letter (Windows) or root (Linux)
-        if platform.system() == "Windows":
-            src_drive = os.path.splitdrive(src)[0]
+        if prelinked_success:
+            linking_method = linking_info.get('method')
+            use_symlink = linking_method == "symlink"
+            use_hardlink = linking_method == "hardlink"
+            tracker_dir = linking_info.get('tracker_dir') or (
+                os.path.dirname(prelinked_dest)
+                if os.path.isfile(prelinked_dest)
+                else prelinked_dest
+            )
+            rename_target = linking_info.get('rename_target')
+            dest_path = prelinked_dest
+            path = prelinked_dest if os.path.isdir(prelinked_dest) else os.path.dirname(prelinked_dest)
         else:
-            # On Unix/Linux, use the full mount point path for more accurate matching
-            src_drive = "/"
+            # Determine linking method
+            linking_method = client.get('linking', None)  # "symlink", "hardlink", or None
+            if meta['debug']:
+                console.print("Linking method:", linking_method)
+            use_symlink = linking_method == "symlink"
+            use_hardlink = linking_method == "hardlink"
 
-            # Get all mount points on the system to find the most specific match
-            mounted_volumes = []
-            try:
-                # Read mount points from /proc/mounts or use 'mount' command output
-                if os.path.exists('/proc/mounts'):
-                    with open('/proc/mounts', 'r') as f:
-                        for line in f:
+            if use_symlink and use_hardlink:
+                error_msg = "Cannot use both hard links and symlinks simultaneously"
+                console.print(f"[bold red]{error_msg}")
+                raise ValueError(error_msg)
+
+            # Get linked folder for this drive
+            linked_folder = client.get('linked_folder', [])
+            if meta['debug']:
+                console.print(f"Linked folders: {linked_folder}")
+            if not isinstance(linked_folder, list):
+                linked_folder = [linked_folder]  # Convert to list if single value
+
+            # Determine drive letter (Windows) or root (Linux)
+            if platform.system() == "Windows":
+                src_drive = os.path.splitdrive(src)[0]
+            else:
+                # On Unix/Linux, use the full mount point path for more accurate matching
+                src_drive = "/"
+
+                # Get all mount points on the system to find the most specific match
+                mounted_volumes = []
+                try:
+                    # Read mount points from /proc/mounts or use 'mount' command output
+                    if os.path.exists('/proc/mounts'):
+                        with open('/proc/mounts', 'r') as f:
+                            for line in f:
+                                parts = line.split()
+                                if len(parts) >= 2:
+                                    mount_point = parts[1]
+                                    mounted_volumes.append(mount_point)
+                    else:
+                        # Fall back to mount command if /proc/mounts doesn't exist
+                        output = subprocess.check_output(['mount'], text=True)
+                        for line in output.splitlines():
                             parts = line.split()
-                            if len(parts) >= 2:
-                                mount_point = parts[1]
+                            if len(parts) >= 3:
+                                mount_point = parts[2]
                                 mounted_volumes.append(mount_point)
-                else:
-                    # Fall back to mount command if /proc/mounts doesn't exist
-                    output = subprocess.check_output(['mount'], text=True)
-                    for line in output.splitlines():
-                        parts = line.split()
-                        if len(parts) >= 3:
-                            mount_point = parts[2]
-                            mounted_volumes.append(mount_point)
-            except Exception as e:
-                if meta.get('debug', False):
-                    console.print(f"[yellow]Error getting mount points: {str(e)}")
-
-            # Sort mount points by length (descending) to find most specific match first
-            mounted_volumes.sort(key=len, reverse=True)
-
-            # Find the most specific mount point that contains our source path
-            for mount_point in mounted_volumes:
-                if src.startswith(mount_point):
-                    src_drive = mount_point
+                except Exception as e:
                     if meta.get('debug', False):
-                        console.print(f"[cyan]Found mount point: {mount_point} for path: {src}")
-                    break
+                        console.print(f"[yellow]Error getting mount points: {str(e)}")
 
-            # If we couldn't find a specific mount point, fall back to linked folder matching
-            if src_drive == "/":
-                # Extract the first directory component for basic matching
-                src_parts = src.strip('/').split('/')
-                if src_parts:
-                    src_root_dir = '/' + src_parts[0]
-                    # Check if any linked folder contains this root
-                    for folder in linked_folder:
-                        if src_root_dir in folder or folder in src_root_dir:
-                            src_drive = src_root_dir
-                            break
+                # Sort mount points by length (descending) to find most specific match first
+                mounted_volumes.sort(key=len, reverse=True)
 
-        # Find a linked folder that matches the drive
-        link_target = None
-        if platform.system() == "Windows":
-            # Windows matching based on drive letters
-            for folder in linked_folder:
-                folder_drive = os.path.splitdrive(folder)[0]
-                if folder_drive == src_drive:
-                    link_target = folder
-                    break
-        else:
-            # Unix/Linux matching based on path containment
-            for folder in linked_folder:
-                # Check if the linked folder starts with the mount point
-                if folder.startswith(src_drive) or src.startswith(folder):
-                    link_target = folder
-                    break
-
-                # Also check if this is a sibling mount point with the same structure
-                folder_parts = folder.split('/')
-                src_drive_parts = src_drive.split('/')
-
-                # Check if both are mounted under the same parent directory
-                if (len(folder_parts) >= 2 and len(src_drive_parts) >= 2 and
-                        folder_parts[1] == src_drive_parts[1]):
-
-                    potential_match = os.path.join(src_drive, folder_parts[-1])
-                    if os.path.exists(potential_match):
-                        link_target = potential_match
-                        if meta['debug']:
-                            console.print(f"[cyan]Found sibling mount point linked folder: {link_target}")
+                # Find the most specific mount point that contains our source path
+                for mount_point in mounted_volumes:
+                    if src.startswith(mount_point):
+                        src_drive = mount_point
+                        if meta.get('debug', False):
+                            console.print(f"[cyan]Found mount point: {mount_point} for path: {src}")
                         break
 
-        if meta['debug']:
-            console.print(f"Source drive: {src_drive}")
-            console.print(f"Link target: {link_target}")
-        # If using symlinks and no matching drive folder, allow any available one
-        if use_symlink and not link_target and linked_folder:
-            link_target = linked_folder[0]
+                # If we couldn't find a specific mount point, fall back to linked folder matching
+                if src_drive == "/":
+                    # Extract the first directory component for basic matching
+                    src_parts = src.strip('/').split('/')
+                    if src_parts:
+                        src_root_dir = '/' + src_parts[0]
+                        # Check if any linked folder contains this root
+                        for folder in linked_folder:
+                            if src_root_dir in folder or folder in src_root_dir:
+                                src_drive = src_root_dir
+                                break
 
-        if (use_symlink or use_hardlink) and not link_target:
-            error_msg = f"No suitable linked folder found for drive {src_drive}"
-            console.print(f"[bold red]{error_msg}")
-            raise ValueError(error_msg)
-
-        # Create tracker-specific directory inside linked folder
-        rename_target = None
-        if use_symlink or use_hardlink:
-            # allow overridden folder name with link_dir_name config var
-            tracker_cfg = self.config["TRACKERS"].get(tracker.upper(), {})
-            link_dir_name = str(tracker_cfg.get("link_dir_name", "")).strip()
-            tracker_dir = os.path.join(link_target, link_dir_name or tracker)
-            await asyncio.to_thread(os.makedirs, tracker_dir, exist_ok=True)
-
-            src_basename = os.path.basename(src.rstrip(os.sep))
-            src_is_file = os.path.isfile(src)
-            src_root, src_ext = os.path.splitext(src_basename)
-
-            resolved_release = meta.get("single_file_release_name")
-            if isinstance(resolved_release, str) and resolved_release.strip():
-                release = resolved_release.strip()
+            # Find a linked folder that matches the drive
+            link_target = None
+            if platform.system() == "Windows":
+                # Windows matching based on drive letters
+                for folder in linked_folder:
+                    folder_drive = os.path.splitdrive(folder)[0]
+                    if folder_drive == src_drive:
+                        link_target = folder
+                        break
             else:
-                preferred_release = (
-                    meta.get("preferred_scene_name")
-                    or meta.get("torrent_name_override")
-                    or meta.get("scene_name")
+                # Unix/Linux matching based on path containment
+                for folder in linked_folder:
+                    # Check if the linked folder starts with the mount point
+                    if folder.startswith(src_drive) or src.startswith(folder):
+                        link_target = folder
+                        break
+
+                    # Also check if this is a sibling mount point with the same structure
+                    folder_parts = folder.split('/')
+                    src_drive_parts = src_drive.split('/')
+
+                    # Check if both are mounted under the same parent directory
+                    if (len(folder_parts) >= 2 and len(src_drive_parts) >= 2 and
+                            folder_parts[1] == src_drive_parts[1]):
+
+                        potential_match = os.path.join(src_drive, folder_parts[-1])
+                        if os.path.exists(potential_match):
+                            link_target = potential_match
+                            if meta['debug']:
+                                console.print(f"[cyan]Found sibling mount point linked folder: {link_target}")
+                            break
+
+            if meta['debug']:
+                console.print(f"Source drive: {src_drive}")
+                console.print(f"Link target: {link_target}")
+            # If using symlinks and no matching drive folder, allow any available one
+            if use_symlink and not link_target and linked_folder:
+                link_target = linked_folder[0]
+
+            if (use_symlink or use_hardlink) and not link_target:
+                error_msg = f"No suitable linked folder found for drive {src_drive}"
+                console.print(f"[bold red]{error_msg}")
+                raise ValueError(error_msg)
+
+            # Create tracker-specific directory inside linked folder
+            rename_target = None
+            if use_symlink or use_hardlink:
+                # allow overridden folder name with link_dir_name config var
+                tracker_cfg = self.config["TRACKERS"].get(tracker.upper(), {})
+                link_dir_name = str(tracker_cfg.get("link_dir_name", "")).strip()
+                tracker_dir = os.path.join(link_target, link_dir_name or tracker)
+                await asyncio.to_thread(os.makedirs, tracker_dir, exist_ok=True)
+
+                src_basename = os.path.basename(src.rstrip(os.sep))
+                src_is_file = os.path.isfile(src)
+                src_root, src_ext = os.path.splitext(src_basename)
+
+                resolved_release = meta.get("single_file_release_name")
+                if isinstance(resolved_release, str) and resolved_release.strip():
+                    release = resolved_release.strip()
+                else:
+                    preferred_release = (
+                        meta.get("preferred_scene_name")
+                        or meta.get("torrent_name_override")
+                        or meta.get("scene_name")
+                    )
+
+                    if isinstance(preferred_release, str) and preferred_release.strip():
+                        release = preferred_release.strip()
+                    else:
+                        release = (
+                            meta.get("name")
+                            or meta.get("release_name")
+                            or (src_root if src_is_file else src_basename)
+                        ).strip()
+
+                        # Conservative safety: strip a few bracket chars; keep dots
+                        for ch in ("{", "}", "[", "]", "(", ")"):
+                            release = release.replace(ch, "")
+
+                if not release:
+                    release = src_root if src_is_file else src_basename
+
+                if src_is_file:
+                    if release.lower().endswith(src_ext.lower()):
+                        dest_filename = release
+                    else:
+                        dest_filename = f"{release}{src_ext}"
+                    dest_path = os.path.join(tracker_dir, dest_filename)
+                    rename_candidate = dest_filename
+                else:
+                    dest_dirname = release or src_basename
+                    dest_path = os.path.join(tracker_dir, dest_dirname)
+                    rename_candidate = dest_dirname
+
+                linking_success = await async_link_directory(
+                    src=src,
+                    dst=dest_path,
+                    use_hardlink=use_hardlink,
+                    debug=meta.get('debug', False)
                 )
-
-                if isinstance(preferred_release, str) and preferred_release.strip():
-                    release = preferred_release.strip()
-                else:
-                    release = (
-                        meta.get("name")
-                        or meta.get("release_name")
-                        or (src_root if src_is_file else src_basename)
-                    ).strip()
-
-                    # Conservative safety: strip a few bracket chars; keep dots
-                    for ch in ("{", "}", "[", "]", "(", ")"):
-                        release = release.replace(ch, "")
-
-            if not release:
-                release = src_root if src_is_file else src_basename
-
-            if src_is_file:
-                if release.lower().endswith(src_ext.lower()):
-                    dest_filename = release
-                else:
-                    dest_filename = f"{release}{src_ext}"
-                dest_path = os.path.join(tracker_dir, dest_filename)
-                rename_candidate = dest_filename
-            else:
-                dest_dirname = release or src_basename
-                dest_path = os.path.join(tracker_dir, dest_dirname)
-                rename_candidate = dest_dirname
-
-            linking_success = await async_link_directory(
-                src=src,
-                dst=dest_path,
-                use_hardlink=use_hardlink,
-                debug=meta.get('debug', False)
-            )
-            allow_fallback = self.config['TRACKERS'].get('allow_fallback', True)
-            if not linking_success and allow_fallback:
-                console.print(f"[yellow]Using original path without linking: {src}")
-                # Reset linking settings for fallback
-                use_hardlink = False
-                use_symlink = False
-            elif linking_success:
-                torrent_name = getattr(torrent, "name", None)
-                if rename_candidate and rename_candidate != torrent_name:
-                    rename_target = rename_candidate
+                allow_fallback = self.config['TRACKERS'].get('allow_fallback', True)
+                if not linking_success and allow_fallback:
+                    console.print(f"[yellow]Using original path without linking: {src}")
+                    # Reset linking settings for fallback
+                    use_hardlink = False
+                    use_symlink = False
+                elif linking_success:
+                    torrent_name = getattr(torrent, "name", None)
+                    if rename_candidate and rename_candidate != torrent_name:
+                        rename_target = rename_candidate
 
         proxy_url = client.get('qui_proxy_url')
         qbt_client = None

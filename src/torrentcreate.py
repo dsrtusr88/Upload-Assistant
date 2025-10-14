@@ -175,6 +175,7 @@ def build_mkbrr_exclude_string(root_folder, filelist):
 
 
 def create_torrent(meta, path, output_filename, tracker_url=None):
+    filelist = meta.get('torrent_filelist', meta['filelist'])
     if meta['isdir']:
         if meta['keep_folder']:
             cli_ui.info('--keep-folder was specified. Using complete folder for torrent creation.')
@@ -182,7 +183,7 @@ def create_torrent(meta, path, output_filename, tracker_url=None):
                 folder_name = os.path.basename(str(path))
                 include = [
                     f"{folder_name}/{os.path.basename(f)}"
-                    for f in meta['filelist']
+                    for f in filelist
                 ]
                 exclude = ["*", "*/**"]
         else:
@@ -198,14 +199,14 @@ def create_torrent(meta, path, output_filename, tracker_url=None):
                     if not file.lower().endswith('sample.mkv') or "!sample" in file.lower()
                 ]
                 if len(no_sample_globs) == 1:
-                    path = meta['filelist'][0]
+                    path = filelist[0]
                 exclude = ["*.*", "*sample.mkv", "!sample*.*"] if not meta['is_disc'] else ""
                 include = ["*.mkv", "*.mp4", "*.ts"] if not meta['is_disc'] else ""
             else:
                 folder_name = os.path.basename(str(path))
                 include = [
                     f"{folder_name}/{os.path.basename(f)}"
-                    for f in meta['filelist']
+                    for f in filelist
                 ]
                 exclude = ["*", "*/**"]
     else:
@@ -228,7 +229,6 @@ def create_torrent(meta, path, output_filename, tracker_url=None):
                 console.print(f"[yellow]Missing episodes: {', '.join(missing_list)}")
 
                 # Show first 15 files from filelist
-                filelist = meta['filelist']
                 files_shown = 0
                 batch_size = 15
 
@@ -316,7 +316,7 @@ def create_torrent(meta, path, output_filename, tracker_url=None):
                 cmd.extend(["--workers", meta['mkbrr_threads']])
 
             if not meta.get('is_disc', False):
-                exclude_str = build_mkbrr_exclude_string(str(path), meta['filelist'])
+                exclude_str = build_mkbrr_exclude_string(str(path), filelist)
                 cmd.extend(["--exclude", exclude_str])
 
             cmd.extend(["-o", output_path])

@@ -575,16 +575,20 @@ async def process_meta(meta, base_dir, bot=None):
                     await create_base_from_existing_torrent(reuse_torrent, meta['base_dir'], meta['uuid'])
 
             if meta['nohash'] is False and reuse_torrent is None:
-                create_torrent(meta, Path(meta['path']), "BASE")
+                await client.prepare_linked_source(meta)
+                creation_path = Path(meta.get('torrent_data_path', meta['path']))
+                create_torrent(meta, creation_path, "BASE")
             if meta['nohash']:
                 meta['client'] = "none"
 
         elif os.path.exists(torrent_path) and meta.get('rehash', False) is True and meta['nohash'] is False:
-            create_torrent(meta, Path(meta['path']), "BASE")
+            await client.prepare_linked_source(meta)
+            creation_path = Path(meta.get('torrent_data_path', meta['path']))
+            create_torrent(meta, creation_path, "BASE")
 
         if int(meta.get('randomized', 0)) >= 1:
             if not meta['mkbrr']:
-                create_random_torrents(meta['base_dir'], meta['uuid'], meta['randomized'], meta['path'])
+                create_random_torrents(meta['base_dir'], meta['uuid'], meta['randomized'], meta.get('torrent_data_path', meta['path']))
 
         meta = await gen_desc(meta)
 
