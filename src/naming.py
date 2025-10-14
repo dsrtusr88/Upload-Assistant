@@ -61,6 +61,41 @@ def _sanitize_scene_name(
     return scene_name
 
 
+def _get_meta_extension(meta: dict[str, Any]) -> str:
+    """Return the most relevant file extension from ``meta``."""
+
+    for candidate in (meta.get("filelist", []) or []):
+        if isinstance(candidate, str):
+            _, extension = os.path.splitext(candidate.strip())
+            if extension:
+                return extension
+
+    if isinstance(meta.get("path"), str):
+        _, extension = os.path.splitext(meta["path"].strip())
+        if extension:
+            return extension
+
+    return ""
+
+
+def _derive_scene_filename(meta: dict[str, Any], scene_name: str) -> str:
+    """Return ``scene_name`` with the best-known extension from ``meta``."""
+
+    extension = _get_meta_extension(meta)
+    base_name = scene_name.rstrip()
+
+    if extension:
+        if base_name.lower().endswith(extension.lower()):
+            return base_name
+
+        if extension.startswith('.') and base_name.endswith('.'):
+            base_name = base_name[:-1]
+
+        return f"{base_name}{extension}"
+
+    return base_name
+
+
 def _append_original_extension(original_name: Any, new_name: str) -> str:
     """Append the original file extension to ``new_name`` when appropriate."""
 
@@ -72,6 +107,29 @@ def _append_original_extension(original_name: Any, new_name: str) -> str:
         return f"{new_name}{ext}"
 
     return new_name
+
+
+def _store_preferred_scene_name(meta: dict[str, Any], scene_name: str) -> None:
+    """Persist a usable Radarr scene filename (including extension)."""
+
+    if not scene_name:
+        return
+
+    preferred = _derive_scene_filename(meta, scene_name).strip()
+    if preferred:
+        current_name = meta.get("name")
+        extension = _get_meta_extension(meta)
+        if extension and not preferred.lower().endswith(extension.lower()):
+            preferred = f"{preferred}{extension}"
+        elif not extension and isinstance(meta.get("name"), str):
+            current_name = meta["name"].strip()
+            _, current_ext = os.path.splitext(current_name)
+            if len(current_ext) > 1 and not preferred.lower().endswith(current_ext.lower()):
+                preferred = f"{preferred}{current_ext}"
+
+        meta["preferred_scene_name"] = preferred
+        if not meta.get("torrent_name_override"):
+            meta["torrent_name_override"] = preferred
 
 
 def apply_preferred_scene_name(meta: dict[str, Any], config: dict[str, Any]) -> None:
@@ -124,7 +182,7 @@ def apply_preferred_scene_name(meta: dict[str, Any], config: dict[str, Any]) -> 
 
         if scene_name:
             meta["name"] = _append_original_extension(meta.get("name"), scene_name)
-            meta.setdefault("torrent_name_override", meta["name"])
+            _store_preferred_scene_name(meta, scene_name)
     except Exception:
         # Never break the upload flow due to naming issues
         pass
@@ -141,7 +199,7 @@ def prefer_radarr_scene_name(meta: dict[str, Any]) -> None:
 
         if scene_name:
             meta["name"] = _append_original_extension(meta.get("name"), scene_name)
-            meta.setdefault("torrent_name_override", meta["name"])
+            _store_preferred_scene_name(meta, scene_name)
     except Exception:
         # Naming issues should never interrupt the main workflow
         pass

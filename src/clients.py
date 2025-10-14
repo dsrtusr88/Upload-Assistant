@@ -1023,17 +1023,33 @@ class Clients():
             src_is_file = os.path.isfile(src)
             src_root, src_ext = os.path.splitext(src_basename)
 
-            release = (meta.get("name") or meta.get("release_name") or (src_root if src_is_file else src_basename)).strip()
+            preferred_release = (
+                meta.get("preferred_scene_name")
+                or meta.get("torrent_name_override")
+                or meta.get("scene_name")
+            )
 
-            # Conservative safety: strip a few bracket chars; keep dots
-            for ch in ("{", "}", "[", "]", "(", ")"):
-                release = release.replace(ch, "")
+            if isinstance(preferred_release, str) and preferred_release.strip():
+                release = preferred_release.strip()
+            else:
+                release = (
+                    meta.get("name")
+                    or meta.get("release_name")
+                    or (src_root if src_is_file else src_basename)
+                ).strip()
+
+                # Conservative safety: strip a few bracket chars; keep dots
+                for ch in ("{", "}", "[", "]", "(", ")"):
+                    release = release.replace(ch, "")
 
             if not release:
                 release = src_root if src_is_file else src_basename
 
             if src_is_file:
-                dest_filename = f"{release}{src_ext}"
+                if release.lower().endswith(src_ext.lower()):
+                    dest_filename = release
+                else:
+                    dest_filename = f"{release}{src_ext}"
                 dest_path = os.path.join(tracker_dir, dest_filename)
                 rename_candidate = dest_filename
             else:

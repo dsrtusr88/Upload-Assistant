@@ -346,7 +346,10 @@ def create_torrent(meta, path, output_filename, tracker_url=None):
     piece_size = calculate_piece_size(initial_size, 32768, 134217728, [], meta)
 
     # Fallback to CustomTorrent if mkbrr is not used
-    torrent_name_override = meta.get('torrent_name_override')
+    torrent_name_override = (
+        meta.get('preferred_scene_name')
+        or meta.get('torrent_name_override')
+    )
     if isinstance(torrent_name_override, str):
         torrent_name_override = torrent_name_override.strip()
         if not torrent_name_override:
