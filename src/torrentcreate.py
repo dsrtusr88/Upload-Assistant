@@ -12,6 +12,7 @@ import subprocess
 import sys
 import platform
 import glob
+from typing import Optional
 from src.console import console
 
 
@@ -72,6 +73,51 @@ def calculate_piece_size(total_size, min_size, max_size, files, meta):
         console.print(f"Number of pieces: {num_pieces}")
 
     return piece_size
+
+
+def _sanitize_release_name(name: str) -> str:
+    """Return ``name`` stripped of characters that commonly break torrents."""
+
+    for ch in ("{", "}", "[", "]", "(", ")"):
+        name = name.replace(ch, "")
+
+    # Prevent accidental directory traversal when the name is reused as a path
+    name = name.replace("/", " ").replace("\\", " ")
+    return name.strip()
+
+
+def resolve_single_file_release_name(meta: dict) -> Optional[str]:
+    """Return the preferred release filename (including extension) for single files."""
+
+    filelist = meta.get('filelist') or []
+    if len(filelist) != 1:
+        return None
+
+    candidate = filelist[0]
+    if not isinstance(candidate, str) or not os.path.isfile(candidate):
+        return None
+
+    release_name = (
+        meta.get('preferred_scene_name')
+        or meta.get('torrent_name_override')
+        or meta.get('scene_name')
+        or meta.get('name')
+        or ''
+    )
+
+    if not isinstance(release_name, str):
+        release_name = ''
+
+    release_name = _sanitize_release_name(release_name)
+
+    if not release_name:
+        release_name = _sanitize_release_name(os.path.splitext(os.path.basename(candidate))[0])
+
+    _, ext = os.path.splitext(candidate)
+    if ext and not release_name.lower().endswith(ext.lower()):
+        release_name = f"{release_name}{ext}"
+
+    return release_name.strip() or None
 
 
 class CustomTorrent(torf.Torrent):
@@ -346,8 +392,15 @@ def create_torrent(meta, path, output_filename, tracker_url=None):
     piece_size = calculate_piece_size(initial_size, 32768, 134217728, [], meta)
 
     # Fallback to CustomTorrent if mkbrr is not used
+    single_file_release_name: Optional[str] = None
+    if not meta.get('keep_folder'):
+        single_file_release_name = resolve_single_file_release_name(meta)
+        if single_file_release_name:
+            meta['single_file_release_name'] = single_file_release_name
+
     torrent_name_override = (
-        meta.get('preferred_scene_name')
+        single_file_release_name
+        or meta.get('preferred_scene_name')
         or meta.get('torrent_name_override')
     )
     if isinstance(torrent_name_override, str):
@@ -373,6 +426,9 @@ def create_torrent(meta, path, output_filename, tracker_url=None):
     )
 
     torrent.generate(callback=torf_cb, interval=5)
+    if single_file_release_name:
+        torrent.metainfo['info']['name'] = single_file_release_name
+
     torrent.write(f"{meta['base_dir']}/tmp/{meta['uuid']}/{output_filename}.torrent", overwrite=True)
     torrent.verify_filesize(path)
 
