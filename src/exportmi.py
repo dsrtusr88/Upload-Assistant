@@ -133,7 +133,7 @@ async def mi_resolution(res, guess, width, scan, height, actual_height):
     return resolution
 
 
-async def exportInfo(video, isdir, folder_id, base_dir, export_text, is_dvd=False, debug=False):
+async def exportInfo(video, isdir, folder_id, base_dir, export_text, is_dvd=False, debug=False, force_export=False):
 
     def filter_mediainfo(data):
         filtered = {
@@ -352,9 +352,10 @@ async def exportInfo(video, isdir, folder_id, base_dir, export_text, is_dvd=Fals
                 console.print(f"[yellow]DVD processing on {current_platform} not supported with specialized MediaInfo[/yellow]")
 
     # Force regeneration if using specialized MediaInfo (to ensure version consistency)
-    force_regenerate = mediainfo_cmd is not None and is_dvd
+    specialized_force = mediainfo_cmd is not None and is_dvd
+    force_regenerate = force_export or specialized_force
 
-    if (not os.path.exists(f"{base_dir}/tmp/{folder_id}/MEDIAINFO.txt") or force_regenerate) and export_text:
+    if (force_regenerate or not os.path.exists(f"{base_dir}/tmp/{folder_id}/MEDIAINFO.txt")) and export_text:
         if debug:
             if force_regenerate and os.path.exists(f"{base_dir}/tmp/{folder_id}/MEDIAINFO.txt"):
                 console.print("[bold yellow]Regenerating MediaInfo text (specialized version)...")
@@ -404,7 +405,7 @@ async def exportInfo(video, isdir, folder_id, base_dir, export_text, is_dvd=Fals
         if debug:
             console.print("[bold green]MediaInfo Exported.")
 
-    if not os.path.exists(f"{base_dir}/tmp/{folder_id}/MediaInfo.json") or force_regenerate:
+    if force_regenerate or not os.path.exists(f"{base_dir}/tmp/{folder_id}/MediaInfo.json"):
         if mediainfo_cmd and is_dvd:
             try:
                 cmd = [mediainfo_cmd, "--Output=JSON", video]

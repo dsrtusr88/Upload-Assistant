@@ -880,7 +880,8 @@ class Clients():
                 folder_id,
                 base_dir,
                 export_text=True,
-                debug=meta.get('debug', False)
+                debug=meta.get('debug', False),
+                force_export=True
             )
         except Exception as exc:
             if meta.get('debug', False):
