@@ -18,6 +18,7 @@ import xmlrpc.client
 from cogs.redaction import redact_private_info
 from deluge_client import DelugeRPCClient
 from src.console import console
+from src.exportmi import exportInfo
 from src.torrentcreate import create_base_from_existing_torrent
 from torf import Torrent
 
@@ -199,6 +200,8 @@ class Clients():
 
         meta['torrent_data_path'] = dest_path
         meta['torrent_filelist'] = torrent_filelist
+
+        await self._regenerate_linked_mediainfo(meta, dest_path, torrent_filelist)
 
     async def find_existing_torrent(self, meta):
         if meta.get('client', None) is None:
@@ -839,6 +842,55 @@ class Clients():
                 rel_path = os.path.basename(original)
             new_filelist.append(os.path.join(dest_path, rel_path))
         return new_filelist
+
+    def _resolve_primary_linked_path(self, dest_path, torrent_filelist):
+        if os.path.isfile(dest_path):
+            return dest_path
+
+        for candidate in torrent_filelist or []:
+            if os.path.isfile(candidate):
+                return candidate
+
+        return None
+
+    async def _regenerate_linked_mediainfo(self, meta, dest_path, torrent_filelist):
+        if meta.get('is_disc') in ('BDMV', 'DVD'):
+            return
+
+        base_dir = meta.get('base_dir')
+        folder_id = meta.get('uuid')
+        if not base_dir or not folder_id:
+            return
+
+        linked_video = self._resolve_primary_linked_path(dest_path, torrent_filelist)
+        if not linked_video or not os.path.exists(linked_video):
+            return
+
+        cache_short = os.path.join(base_dir, 'tmp', folder_id, 'MEDIAINFO_SHORT.txt')
+        try:
+            if os.path.exists(cache_short):
+                os.remove(cache_short)
+        except OSError:
+            pass
+
+        try:
+            mi_data = await exportInfo(
+                linked_video,
+                False,
+                folder_id,
+                base_dir,
+                export_text=True,
+                debug=meta.get('debug', False)
+            )
+        except Exception as exc:
+            if meta.get('debug', False):
+                console.print(f"[yellow]Failed to regenerate MediaInfo for linked source: {exc}")
+            return
+
+        if mi_data:
+            meta['mediainfo'] = mi_data
+            linking_info = meta.setdefault('linking_info', {})
+            linking_info['mediainfo_path'] = linked_video
 
     def rtorrent(self, path, torrent_path, torrent, meta, local_path, remote_path, client, tracker):
         # Get the appropriate source path (same as in qbittorrent method)
