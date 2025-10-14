@@ -5,6 +5,30 @@ import os
 
 from typing import Any, Iterable
 
+try:  # pragma: no cover - optional dependency during testing
+    from src.radarr import sceneNaming as _radarr_scene_naming
+except Exception:  # noqa: BLE001 - fallback when Radarr deps are unavailable
+    _radarr_scene_naming = None
+
+
+def _extract_radarr_scene_name(radarr_data: dict[str, Any] | None) -> str | None:
+    """Return the scene name from Radarr data when available."""
+
+    if _radarr_scene_naming is not None:
+        scene_name = _radarr_scene_naming(radarr_data)
+        if scene_name:
+            return scene_name
+
+    movie_file = (radarr_data or {}).get("movieFile") or {}
+    scene_name = movie_file.get("sceneName")
+
+    if isinstance(scene_name, str):
+        scene_name = scene_name.strip()
+        if scene_name:
+            return scene_name
+
+    return None
+
 DEFAULT_STRIP_CHARS: tuple[str, ...] = ("{", "}", "[", "]", "(", ")")
 DEFAULT_SPACE_REPLACEMENT = "."
 
@@ -57,12 +81,7 @@ def apply_preferred_scene_name(meta: dict[str, Any], config: dict[str, Any]) -> 
             return
 
         radarr_data = meta.get("radarr") or {}
-        movie_file = radarr_data.get("movieFile") or {}
-        scene_name = movie_file.get("sceneName")
-        if not scene_name:
-            return
-
-        scene_name = str(scene_name).strip()
+        scene_name = _extract_radarr_scene_name(radarr_data)
         if not scene_name:
             return
 
@@ -104,6 +123,7 @@ def apply_preferred_scene_name(meta: dict[str, Any], config: dict[str, Any]) -> 
 
         if scene_name:
             meta["name"] = _append_original_extension(meta.get("name"), scene_name)
+            meta.setdefault("torrent_name_override", meta["name"])
     except Exception:
         # Never break the upload flow due to naming issues
         pass
@@ -114,19 +134,13 @@ def prefer_radarr_scene_name(meta: dict[str, Any]) -> None:
 
     try:
         radarr_data = meta.get("radarr") or {}
-        movie_file = radarr_data.get("movieFile") or {}
-        scene_name = (movie_file.get("sceneName") or "").strip()
+        scene_name = _extract_radarr_scene_name(radarr_data)
         if not scene_name:
             return
 
-        scene_name = scene_name.replace("DD+", "DDP")
-        scene_name = scene_name.replace("HDR.", "HDR10.")
-
-        for char in ("{", "}", "[", "]", "(", ")"):
-            scene_name = scene_name.replace(char, "")
-
         if scene_name:
             meta["name"] = _append_original_extension(meta.get("name"), scene_name)
+            meta.setdefault("torrent_name_override", meta["name"])
     except Exception:
         # Naming issues should never interrupt the main workflow
         pass

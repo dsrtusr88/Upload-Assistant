@@ -495,6 +495,8 @@ class Prep():
                         console.print(f"Genres: {ids['genres']}")
                         console.print(f"Year: {ids['year']}")
                         console.print(f"Release Group: {ids['release_group']}")
+                    if ids.get('movie'):
+                        meta['radarr'] = ids['movie']
                     if meta.get('imdb_id', 0) == 0 and ids['imdb_id'] is not None:
                         meta['imdb_id'] = ids['imdb_id']
                     if meta.get('tmdb_id', 0) == 0 and ids['tmdb_id'] is not None:
@@ -551,6 +553,8 @@ class Prep():
                         console.print(f"Genres: {ids['genres']}")
                         console.print(f"Year: {ids['year']}")
                         console.print(f"Release Group: {ids['release_group']}")
+                    if ids.get('movie'):
+                        meta['radarr'] = ids['movie']
                     if meta.get('imdb_id', 0) == 0 and ids['imdb_id'] is not None:
                         meta['imdb_id'] = ids['imdb_id']
                     if meta.get('tmdb_id', 0) == 0 and ids['tmdb_id'] is not None:

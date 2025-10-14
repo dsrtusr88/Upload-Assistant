@@ -1,4 +1,6 @@
 import httpx
+from typing import Any, Optional
+
 from data.config import config
 from src.console import console
 
@@ -90,7 +92,8 @@ async def extract_movie_data(radarr_data, filename=None):
             "tmdb_id": None,
             "year": None,
             "genres": [],
-            "release_group": None
+            "release_group": None,
+            "movie": None,
         }
 
     if filename:
@@ -112,5 +115,27 @@ async def extract_movie_data(radarr_data, filename=None):
         "tmdb_id": movie.get("tmdbId", None),
         "year": movie.get("year", None),
         "genres": movie.get("genres", []),
-        "release_group": release_group if release_group else None
+        "release_group": release_group if release_group else None,
+        "movie": movie,
     }
+
+
+def sceneNaming(movie_data: Optional[dict[str, Any]]) -> Optional[str]:
+    """Return the raw scene name provided by Radarr for a movie file.
+
+    Radarr exposes scene naming through ``movieFile.sceneName``.  The helper keeps
+    Upload Assistant's behaviour aligned with Radarr by simply returning the
+    trimmed value when available.
+    """
+
+    if not isinstance(movie_data, dict):
+        return None
+
+    movie_file = movie_data.get("movieFile") or {}
+    scene_name = movie_file.get("sceneName")
+
+    if not isinstance(scene_name, str):
+        return None
+
+    scene_name = scene_name.strip()
+    return scene_name or None
