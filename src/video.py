@@ -9,6 +9,14 @@ from src.cleanup import cleanup, reset_terminal
 from src.console import console
 from src.exportmi import mi_resolution
 
+try:
+    from data.config import config  # type: ignore
+except Exception:  # pragma: no cover - fallback for tests without a config module
+    config = {  # type: ignore[assignment]
+        "DEFAULT": {},
+        "NAMING": {},
+    }
+
 
 async def get_uhd(type, guess, resolution, path):
     try:
@@ -175,6 +183,26 @@ async def get_video(videoloc, mode, sorted_filelist=False):
                                 sys.exit(1)
                 if any(tag in file for tag in ['{tmdb-', '{imdb-', '{tvdb-']):
                     console.print(f"[bold red]This looks like some *arr renamed file which is not allowed: [yellow]{file}")
+                    default_section = config.get("DEFAULT", {})  # type: ignore[assignment]
+                    naming_section = config.get("NAMING", {})  # type: ignore[assignment]
+                    use_radarr = bool(default_section.get("use_radarr", False)) if isinstance(default_section, dict) else False
+                    prefer_scene = bool(naming_section.get("prefer_radarr_scene_name", False)) if isinstance(naming_section, dict) else False
+                    if use_radarr:
+                        if prefer_scene:
+                            console.print(
+                                "[bold yellow]Radarr support is enabled—Upload Assistant will pull the scene name automatically later in the run.[/bold yellow]"
+                            )
+                        else:
+                            console.print(
+                                "[bold yellow]Radarr is enabled. Set NAMING.prefer_radarr_scene_name = True in your config to have Upload Assistant apply the Radarr scene name automatically.[/bold yellow]"
+                            )
+                    else:
+                        console.print(
+                            "[bold yellow]Tip: Enable use_radarr and NAMING.prefer_radarr_scene_name in data/config.py so Upload Assistant can look up the original scene name for you.[/bold yellow]"
+                        )
+                    console.print(
+                        "[bold yellow]Choose 'no' if you want to stop and fix the filename before continuing.[/bold yellow]"
+                    )
                     try:
                         if cli_ui.ask_yes_no("Do you want to upload with this file?", default="yes"):
                             pass
