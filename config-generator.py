@@ -6,6 +6,10 @@ import json
 from pathlib import Path
 import ast
 
+from src import patch_file_permissions
+
+patch_file_permissions()
+
 
 def read_example_config():
     """Read the example config file and return its structure and comments"""
