@@ -29,6 +29,7 @@ def _extract_radarr_scene_name(radarr_data: dict[str, Any] | None) -> str | None
 
     return None
 
+
 DEFAULT_STRIP_CHARS: tuple[str, ...] = ("{", "}", "[", "]", "(", ")")
 DEFAULT_SPACE_REPLACEMENT = "."
 
