@@ -164,7 +164,8 @@ async def get_video(videoloc, mode, sorted_filelist=False):
         globlist = glob.glob1(videoloc, "*.mkv") + glob.glob1(videoloc, "*.mp4") + glob.glob1(videoloc, "*.ts")
         for file in globlist:
             if not file.lower().endswith('sample.mkv') or "!sample" in file.lower():
-                filelist.append(os.path.abspath(f"{videoloc}{os.sep}{file}"))
+                full_path = os.path.abspath(f"{videoloc}{os.sep}{file}")
+                filelist.append(full_path)
                 filelist = sorted(filelist)
                 if len(filelist) > 1:
                     for f in filelist:
@@ -206,6 +207,18 @@ async def get_video(videoloc, mode, sorted_filelist=False):
                     try:
                         if cli_ui.ask_yes_no("Do you want to upload with this file?", default="yes"):
                             pass
+                        else:
+                            new_path = await prompt_filename_correction(full_path)
+                            if new_path:
+                                try:
+                                    original_index = filelist.index(full_path)
+                                except ValueError:
+                                    original_index = -1
+                                if original_index >= 0:
+                                    filelist[original_index] = new_path
+                                else:
+                                    filelist.append(new_path)
+                                file = os.path.basename(new_path)
                     except EOFError:
                         console.print("\n[red]Exiting on user request (Ctrl+C)[/red]")
                         await cleanup()
@@ -228,6 +241,60 @@ async def get_video(videoloc, mode, sorted_filelist=False):
     else:
         filelist = sorted(filelist)
     return video, filelist
+
+
+async def prompt_filename_correction(full_path: str) -> str | None:
+    """Prompt the user for a replacement filename and apply it on disk.
+
+    Returns the new absolute path when the rename succeeds, otherwise ``None``.
+    """
+
+    directory = os.path.dirname(full_path)
+    original_name = os.path.basename(full_path)
+
+    while True:
+        try:
+            new_name = cli_ui.ask_string(
+                "Enter a new filename (leave blank to skip renaming):",
+                default=original_name,
+            )
+        except EOFError:
+            console.print("\n[red]Exiting on user request (Ctrl+C)[/red]")
+            await cleanup()
+            reset_terminal()
+            sys.exit(1)
+
+        if not new_name:
+            console.print("[yellow]Skipping filename change and continuing with the existing file.[/yellow]")
+            return None
+
+        candidate = new_name.strip()
+        if not candidate:
+            console.print("[yellow]Skipping filename change and continuing with the existing file.[/yellow]")
+            return None
+
+        if os.path.sep in candidate or candidate in {".", ".."}:
+            console.print("[bold red]Invalid filename. Please enter a name without path separators.[/bold red]")
+            continue
+
+        _, ext = os.path.splitext(original_name)
+        if ext and not candidate.lower().endswith(ext.lower()):
+            candidate = f"{candidate}{ext}"
+
+        new_path = os.path.join(directory, candidate)
+
+        if os.path.exists(new_path):
+            console.print(f"[bold red]A file named [yellow]{candidate}[/yellow] already exists. Please choose another name.[/bold red]")
+            continue
+
+        try:
+            os.rename(full_path, new_path)
+        except OSError as exc:
+            console.print(f"[bold red]Failed to rename file: {exc}[/bold red]")
+            continue
+
+        console.print(f"[green]Renamed file to: [yellow]{candidate}[/yellow][/green]")
+        return os.path.abspath(new_path)
 
 
 async def get_resolution(guess, folder_id, base_dir):
