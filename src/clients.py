@@ -132,7 +132,29 @@ class Clients():
             meta['linking_info'] = {'prepared': True, 'success': False}
             return
 
-        base_dir_name = str(client_cfg.get('base_link_dir_name', 'BASE')).strip() or 'BASE'
+        configured_base_dir = str(client_cfg.get('base_link_dir_name', '') or '').strip()
+        if configured_base_dir:
+            base_dir_name = configured_base_dir
+        else:
+            tracker_candidates = [
+                str(tracker).strip()
+                for tracker in (meta.get('trackers') or [])
+                if isinstance(tracker, str) and tracker.strip()
+            ]
+
+            # Fallback to singular tracker value if present
+            if not tracker_candidates and isinstance(meta.get('tracker'), str):
+                tracker_candidates = [meta['tracker'].strip()]
+
+            if tracker_candidates:
+                base_dir_candidate = tracker_candidates[0]
+                # Sanitize to avoid problematic filesystem characters
+                base_dir_name = re.sub(r"[^0-9A-Za-z._-]", "_", base_dir_candidate)
+            else:
+                base_dir_name = 'BASE'
+
+        if not base_dir_name:
+            base_dir_name = 'BASE'
         tracker_dir = os.path.join(link_target, base_dir_name)
         await asyncio.to_thread(os.makedirs, tracker_dir, exist_ok=True)
 
