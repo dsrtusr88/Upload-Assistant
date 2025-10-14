@@ -1,13 +1,22 @@
 import asyncio
+import importlib
 import sys
 import types
 
-stub_config = types.ModuleType("data.config")
-stub_config.config = {"DEFAULT": {}}
-sys.modules.setdefault("data", types.ModuleType("data"))
-sys.modules["data.config"] = stub_config
 
-from src.radarr import extract_movie_data
+def _load_radarr_module():
+    """Import ``src.radarr`` with a stubbed ``data.config`` module."""
+
+    stub_config = types.ModuleType("data.config")
+    stub_config.config = {"DEFAULT": {}}
+    sys.modules.setdefault("data", types.ModuleType("data"))
+    sys.modules["data.config"] = stub_config
+
+    module = importlib.import_module("src.radarr")
+    return importlib.reload(module)
+
+
+radarr = _load_radarr_module()
 
 
 def test_extract_movie_data_matches_folder_name():
@@ -33,7 +42,7 @@ def test_extract_movie_data_matches_folder_name():
         },
     ]
 
-    result = asyncio.run(extract_movie_data(radarr_payload, filename="The Balloonist (2025)"))
+    result = asyncio.run(radarr.extract_movie_data(radarr_payload, filename="The Balloonist (2025)"))
 
     assert result["tmdb_id"] == 1100800
     assert result["imdb_id"] == 38346012
@@ -59,7 +68,7 @@ def test_extract_movie_data_falls_back_to_first_entry():
         },
     ]
 
-    result = asyncio.run(extract_movie_data(radarr_payload, filename="not-a-match"))
+    result = asyncio.run(radarr.extract_movie_data(radarr_payload, filename="not-a-match"))
 
     assert result["tmdb_id"] == 1100800
     assert result["imdb_id"] == 38346012
