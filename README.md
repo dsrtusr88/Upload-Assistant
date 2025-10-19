@@ -116,6 +116,16 @@ The script is safe to re-run. It verifies that the `upstream` remote points to
 Audionut's repository, fetches the latest references, and (optionally) configures
 your current branch to track the selected upstream branch.
 
+If you are working in an offline environment, you can ship a git bundle of the
+upstream repository alongside your fork and import it with::
+
+```bash
+python bin/setup_upstream.py --bundle data/audionut-master.bundle --track-branch master
+```
+
+This populates `refs/remotes/upstream/*` from the bundle without contacting
+GitHub, allowing you to diff and merge upstream changes entirely offline.
+
 ## **CLI Usage:**
 
   `python3 upload.py "/path/to/content" --args`

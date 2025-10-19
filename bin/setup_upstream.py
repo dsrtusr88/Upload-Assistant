@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+from pathlib import Path
 from typing import Optional
 
 DEFAULT_REMOTE_NAME = "upstream"
@@ -107,8 +108,34 @@ def ensure_remote(remote_name: str, remote_url: str) -> bool:
     return False
 
 
-def fetch_remote(remote_name: str) -> None:
-    """Fetch the latest refs from the configured upstream remote."""
+def fetch_remote(remote_name: str, bundle_path: Optional[str] = None) -> None:
+    """Fetch the latest refs from the configured upstream remote.
+
+    When ``bundle_path`` is provided the refs are populated from the bundle
+    instead of contacting the network. This makes it possible to work in
+    restricted environments by shipping a ``git bundle`` alongside the repo.
+
+    Args:
+        remote_name: The remote to populate refs for (e.g. ``upstream``).
+        bundle_path: Optional path to a local git bundle containing upstream
+            history. When provided the bundle is fetched directly and the
+            remote URL is not contacted.
+    """
+
+    if bundle_path:
+        bundle = Path(bundle_path)
+        if not bundle.is_file():
+            raise SystemExit(
+                f"Bundle path '{bundle}' does not exist or is not a file."
+            )
+        run_git_command(
+            "fetch",
+            "--force",
+            "--tags",
+            str(bundle),
+            f"refs/heads/*:refs/remotes/{remote_name}/*",
+        )
+        return
 
     run_git_command("fetch", remote_name)
 
@@ -168,6 +195,14 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="URL the remote should point to.",
     )
     parser.add_argument(
+        "--bundle",
+        metavar="PATH",
+        help=(
+            "Optional path to a git bundle that should be fetched instead of "
+            "contacting the remote URL. Useful in offline environments."
+        ),
+    )
+    parser.add_argument(
         "--track-branch",
         metavar="BRANCH",
         help=(
@@ -196,8 +231,14 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(f"Remote '{args.remote_name}' already exists and matches the expected URL.")
 
-    fetch_remote(args.remote_name)
-    print(f"Fetched updates from '{args.remote_name}'.")
+    fetch_remote(args.remote_name, args.bundle)
+    if args.bundle:
+        print(
+            f"Fetched updates for '{args.remote_name}' from bundle "
+            f"'{args.bundle}'."
+        )
+    else:
+        print(f"Fetched updates from '{args.remote_name}'.")
 
     if args.track_branch:
         set_tracking_branch(args.remote_name, args.track_branch, args.local_branch)
