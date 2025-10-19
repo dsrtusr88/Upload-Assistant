@@ -103,6 +103,19 @@ Better just to be on this fork and bug me about my bugs, rather than bugging som
   - Run `python3 -m pip install --user -U -r requirements.txt` to ensure dependencies are up to date
   - Run `python3 config-generator.py` and select to grab new UA config options.
 
+### Keeping a fork aligned with upstream
+
+If you are maintaining a fork of Upload Assistant, the helper script in
+`bin/setup_upstream.py` can add and fetch the official upstream remote for you.
+
+```bash
+python bin/setup_upstream.py --track-branch master
+```
+
+The script is safe to re-run. It verifies that the `upstream` remote points to
+Audionut's repository, fetches the latest references, and (optionally) configures
+your current branch to track the selected upstream branch.
+
 ## **CLI Usage:**
 
   `python3 upload.py "/path/to/content" --args`

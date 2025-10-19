@@ -1002,9 +1002,10 @@ class Clients():
                         console.print(f"[bold yellow]Linking to tracker directory: {tracker_dir}")
                         console.print(f"[cyan]Source path: {src}")
 
-                    # Extract only the folder or file name from `src`
-                    src_name = os.path.basename(src.rstrip(os.sep))  # Ensure we get just the name
-                    dst = os.path.join(tracker_dir, src_name)  # Destination inside linked folder
+                    # Build the destination path using the same naming logic as the
+                    # pre-link workflow so Radarr scene names (and other overrides)
+                    # are respected for both hardlinks and symlinks.
+                    dst, _ = self._build_dest_path(src, tracker_dir, meta)
 
                     # path magic
                     if os.path.exists(dst) or os.path.islink(dst):
@@ -1340,47 +1341,7 @@ class Clients():
                 tracker_dir = os.path.join(link_target, link_dir_name or tracker)
                 await asyncio.to_thread(os.makedirs, tracker_dir, exist_ok=True)
 
-                src_basename = os.path.basename(src.rstrip(os.sep))
-                src_is_file = os.path.isfile(src)
-                src_root, src_ext = os.path.splitext(src_basename)
-
-                resolved_release = meta.get("single_file_release_name")
-                if isinstance(resolved_release, str) and resolved_release.strip():
-                    release = resolved_release.strip()
-                else:
-                    preferred_release = (
-                        meta.get("preferred_scene_name")
-                        or meta.get("torrent_name_override")
-                        or meta.get("scene_name")
-                    )
-
-                    if isinstance(preferred_release, str) and preferred_release.strip():
-                        release = preferred_release.strip()
-                    else:
-                        release = (
-                            meta.get("name")
-                            or meta.get("release_name")
-                            or (src_root if src_is_file else src_basename)
-                        ).strip()
-
-                        # Conservative safety: strip a few bracket chars; keep dots
-                        for ch in ("{", "}", "[", "]", "(", ")"):
-                            release = release.replace(ch, "")
-
-                if not release:
-                    release = src_root if src_is_file else src_basename
-
-                if src_is_file:
-                    if release.lower().endswith(src_ext.lower()):
-                        dest_filename = release
-                    else:
-                        dest_filename = f"{release}{src_ext}"
-                    dest_path = os.path.join(tracker_dir, dest_filename)
-                    rename_candidate = dest_filename
-                else:
-                    dest_dirname = release or src_basename
-                    dest_path = os.path.join(tracker_dir, dest_dirname)
-                    rename_candidate = dest_dirname
+                dest_path, rename_candidate = self._build_dest_path(src, tracker_dir, meta)
 
                 linking_success = await async_link_directory(
                     src=src,
