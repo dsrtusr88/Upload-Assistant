@@ -51,6 +51,22 @@ jobs:
             echo "VERSION=${BRANCH_NAME}" >> $GITHUB_ENV
           fi
 
+      - name: Load baseline release tag
+        if: ${{ github.event_name == 'release' }}
+        run: |
+          if [ -f BASELINE_RELEASE ]; then
+            BASELINE_TAG=$(cat BASELINE_RELEASE | tr -d '\n' | tr -d '\r')
+            if [ -n "$BASELINE_TAG" ]; then
+              echo "BASELINE_RELEASE_TAG=${BASELINE_TAG}" >> $GITHUB_ENV
+            else
+              echo "❌ BASELINE_RELEASE file is empty" >&2
+              exit 1
+            fi
+          else
+            echo "❌ BASELINE_RELEASE file not found" >&2
+            exit 1
+          fi
+
       - name: Extract metadata (tags, labels) for Docker
         id: meta
         uses: docker/metadata-action@v5
@@ -60,6 +76,7 @@ jobs:
             type=ref,event=branch
             type=ref,event=tag
             type=raw,value=latest,enable=${{ github.event_name == 'release' }}
+            type=raw,value=${{ env.BASELINE_RELEASE_TAG }},enable=${{ github.event_name == 'release' }}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
@@ -77,7 +94,12 @@ jobs:
           echo "✅ Docker images built and pushed successfully!"
           echo "🐋 Images:"
           echo "  - ${{ env.REGISTRY }}/${{ env.LOWER_CASE_IMAGE_NAME }}:${{ env.VERSION }}"
-          echo "  - ${{ env.REGISTRY }}/${{ env.LOWER_CASE_IMAGE_NAME }}:latest"
+          if [ -n "${BASELINE_RELEASE_TAG:-}" ]; then
+            echo "  - ${{ env.REGISTRY }}/${{ env.LOWER_CASE_IMAGE_NAME }}:${{ env.BASELINE_RELEASE_TAG }}"
+          fi
+          if [ "${{ github.event_name }}" == "release" ]; then
+            echo "  - ${{ env.REGISTRY }}/${{ env.LOWER_CASE_IMAGE_NAME }}:latest"
+          fi
           if [ "${{ github.event_name }}" == "release" ]; then
             echo "📝 Triggered by release: ${{ github.event.release.tag_name }}"
           else
